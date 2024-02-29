@@ -41,6 +41,7 @@ class DiffusionInference(SVCInference):
         self.pipeline = DiffusionInferencePipeline(
             self.model[1],
             self.scheduler,
+            cfg.inference.diffusion.acoustic_mapper_trt_model,
             args.diffusion_inference_steps,
         )
 

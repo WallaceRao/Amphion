@@ -513,3 +513,47 @@ def synthesis(
         fast_inference=fast_inference,
     )
     return audios_pred
+
+
+def synthesis(
+    cfg,
+    vocoder,
+    n_samples,
+    pred,
+    f0s=None,
+    batch_size=64,
+    fast_inference=False,
+):
+    """Synthesis audios from a given vocoder and series of given features.
+    cfg: vocoder config.
+    vocoder: vocoder model.
+    pred: a list of numpy arrays. [(seq_len1, acoustic_features_dim), (seq_len2, acoustic_features_dim), ...]
+    """
+
+    vocoder_name = cfg.model.generator
+
+    print("Synthesis audios using {} vocoder...".format(vocoder_name))
+
+    ###### TODO: World Vocoder Refactor ######
+    # if vocoder_name == "world":
+    #     world_inference.synthesis_audios(
+    #         cfg, dataset_name, split, n_samples, pred, save_dir, tag
+    #     )
+    #     return
+
+    # ====== Loading neural vocoder model ======
+    device = next(vocoder.parameters()).device
+
+    # ====== Inference for predicted acoustic features ======
+    # pred: (frame_len, n_mels) -> (n_mels, frame_len)
+    mels_pred = tensorize([p.T for p in pred], device, n_samples)
+    print("For predicted mels, #sample = {}...".format(len(mels_pred)))
+    audios_pred = _vocoder_infer_funcs[vocoder_name](
+        cfg,
+        vocoder,
+        mels_pred,
+        f0s=f0s,
+        batch_size=batch_size,
+        fast_inference=fast_inference,
+    )
+    return audios_pred

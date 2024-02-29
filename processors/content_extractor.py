@@ -423,7 +423,9 @@ class MertExtractor(BaseExtractor):
         return mert_features
 
 
-def extract_utt_content_features_dataloader(cfg, metadata, num_workers):
+def extract_utt_content_features_dataloader(cfg, metadata, num_workers,
+                                            whisper_extractor = None,
+                                            contentvec_extractor = None):
     dataset_name = metadata[0]["Dataset"]
     with torch.no_grad():
         if cfg.preprocess.extract_whisper_feature:
@@ -449,17 +451,18 @@ def extract_utt_content_features_dataloader(cfg, metadata, num_workers):
                     collate_fn=collate_batch,
                     drop_last=False,
                 )
-                extractor = WhisperExtractor(cfg)
-                extractor.load_model()
+                if whisper_extractor is None:
+                    whisper_extractor = WhisperExtractor(cfg)
+                    whisper_extractor.load_model()
                 for batch_idx, items in enumerate(tqdm(data_loader)):
                     _metadata, wavs, lens = items
 
-                    batch_content_features = extractor.extract_content_features(
+                    batch_content_features = whisper_extractor.extract_content_features(
                         wavs,
                         lens,
                     )
                     for index, utt in enumerate(_metadata):
-                        extractor.save_feature(utt, batch_content_features[index])
+                        whisper_extractor.save_feature(utt, batch_content_features[index])
 
         if cfg.preprocess.extract_contentvec_feature:
             feat_dir = os.path.join(
@@ -484,16 +487,17 @@ def extract_utt_content_features_dataloader(cfg, metadata, num_workers):
                     collate_fn=collate_batch,
                     drop_last=False,
                 )
-                extractor = ContentvecExtractor(cfg)
-                extractor.load_model()
+                if contentvec_extractor is None:
+                    contentvec_extractor = ContentvecExtractor(cfg)
+                    contentvec_extractor.load_model()
                 for batch_idx, items in enumerate(tqdm(data_loader)):
                     _metadata, wavs, lens = items
 
-                    batch_content_features = extractor.extract_content_features(
+                    batch_content_features = contentvec_extractor.extract_content_features(
                         wavs, lens
                     )
                     for index, utt in enumerate(_metadata):
-                        extractor.save_feature(utt, batch_content_features[index])
+                        contentvec_extractor.save_feature(utt, batch_content_features[index])
 
         if cfg.preprocess.extract_wenet_feature:
             feat_dir = os.path.join(cfg.preprocess.processed_dir, dataset_name, "wenet")

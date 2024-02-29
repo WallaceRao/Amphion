@@ -17,7 +17,7 @@ import torch
 from accelerate.logging import get_logger
 from torch.utils.data import DataLoader
 
-from models.vocoders.vocoder_inference import synthesis
+from models.vocoders.vocoder_inference import synthesis, load_nnvocoder
 from utils.io import save_audio
 from utils.util import load_config
 from utils.audio_slicer import is_silence
@@ -90,6 +90,15 @@ class BaseInference(object):
             # self.logger.debug(self.model)
             self.logger.info(f"Building model done in {(end - start) / 1e6:.3f}ms")
 
+        # setup vocoder
+        with self.accelerator.main_process_first():
+            self.logger.info("Building vocoder...")
+            vocoder_cfg, vocoder_ckpt = self._parse_vocoder(self.args.vocoder_dir)
+            vocoder_name = vocoder_cfg.model.generator
+            self.vocoder = load_nnvocoder(vocoder_cfg, vocoder_name,
+                                        weights_file=vocoder_ckpt, from_multi_gpu=True)
+            self.logger.info(f"Building vocoder done in {(end - start) / 1e6:.3f}ms")
+
         # init with accelerate
         self.logger.info("Initializing accelerate...")
         start = time.monotonic_ns()
@@ -141,17 +150,16 @@ class BaseInference(object):
                 uid = self.test_dataset.metadata[i * self.test_batch_size + j]["Uid"]
                 torch.save(it, os.path.join(self.args.output_dir, f"{uid}.pt"))
                 j += 1
-
         vocoder_cfg, vocoder_ckpt = self._parse_vocoder(self.args.vocoder_dir)
 
         res = synthesis(
             cfg=vocoder_cfg,
-            vocoder_weight_file=vocoder_ckpt,
+            vocoder=self.vocoder,
             n_samples=None,
             pred=[
                 torch.load(
-                    os.path.join(self.args.output_dir, "{}.pt".format(i["Uid"]))
-                ).numpy(force=True)
+                    os.path.join(self.args.output_dir,  "{}.pt".format(i["Uid"]))
+                ).numpy()
                 for i in self.test_dataset.metadata
             ],
         )
@@ -162,7 +170,7 @@ class BaseInference(object):
             file = os.path.join(self.args.output_dir, f"{uid}.wav")
             output_audio_files.append(file)
 
-            wav = wav.numpy(force=True)
+            wav = wav.numpy()
             save_audio(
                 file,
                 wav,
