@@ -3,13 +3,10 @@ import numpy as np
 import os
 import torch
 import copy
-from g2p_en import G2p
 import re
 import unicodedata
 from g2p_en import G2p
 from g2p_en.expand import normalize_numbers
-
-g2p = G2p()
 
 PHONE_SET = [
     "!",
