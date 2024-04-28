@@ -120,7 +120,7 @@ class GPTTTS(nn.Module):
         target_mask,
         prompt_ids=None,
         prompt_mask=None,
-        return_labels=True,
+        return_labels=False,
     ):
         if prompt_ids is None:
 
