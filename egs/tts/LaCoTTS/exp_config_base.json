@@ -1,5 +1,5 @@
 {
-    // "base_config": "config/lacotts.json",
+    "base_config": "config/tts.json",
     "model_type": "LaCoTTS",
     "dataset": ["Your Dataset Name"],
     "preprocess": {
