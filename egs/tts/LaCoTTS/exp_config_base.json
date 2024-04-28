@@ -1,0 +1,75 @@
+{
+    // "base_config": "config/lacotts.json",
+    "model_type": "LaCoTTS",
+    // "dataset": {
+
+    // },
+    // "preprocess": {
+    
+    // },
+    "model": {
+        "latent_codec": {
+            "encoder": {
+                "d_mel": 128,
+                "d_model": 96,
+                "num_blocks": 4,
+                "out_channels": 256,
+                "use_tanh": false
+            },
+            "decoder": {
+                "in_channels": 256,
+                "num_quantizers": 1,
+                "codebook_size": 8192,
+                "codebook_dim": 8,
+                "quantizer_type": "fvq",
+                "use_l2_normlize": true,
+                "vocos_dim": 512,
+                "vocos_intermediate_dim": 4096,
+                "vocos_num_layers": 16,
+                "ln_before_vq": true,
+                "use_pe": false
+            },
+            "pretrained_ckpt": "..."       
+        },
+        "wav_codec": {
+            "encoder": {
+                "d_model": 96,
+                "out_channels": 128,
+                "up_ratios": [2, 4, 5, 5],
+                "use_tanh": false
+            },
+            "decoder": {
+                "in_channels": 128,
+                "upsample_initial_channel": 1536,
+                "num_quantizers": 8,
+                "codebook_size": 1024,
+                "codebook_dim": 128,
+                "quantizer_type": "fvq",
+                "quantizer_dropout": 0.5,
+                "use_l2_normlize": true,
+                "use_vocos": true,
+                "vocos_dim": 512,
+                "vocos_intermediate_dim": 4096,
+                "vocos_num_layers": 24
+            },
+            "pretrained_ckpt": "..."
+        },
+        "gpt_tts": {
+            "phone_vocab_size": 256,
+            "target_vocab_size": 8192,
+            "hidden_size": 1024,
+            "intermediate_siz": 4096,
+            "num_hidden_layer": 12,
+            "num_attention_head": 16,
+            "pad_token_id": 8448,
+            "bos_target_id": 8449,
+            "eos_target_id": 8450,
+            "bos_phone_id": 8451,
+            "eos_phone_id": 8452,
+            "max_position_embeddings": 2048
+        }
+    }
+    // "train": {
+
+    // }
+}

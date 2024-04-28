@@ -5,15 +5,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 from torch.nn.utils import weight_norm
-
-from models.codec.amphion_codec.quantize import (
-    ResidualVQ,
-    VectorQuantize,
-    FactorizedVectorQuantize,
-    LookupFreeQuantize,
-)
-
-from models.codec.amphion_codec.vocos import Vocos
+from einops import rearrange
+from einops.layers.torch import Rearrange
+from models.codec.codec.vocos import Vocos, VocosBackbone
+from models.codec.codec.quantize import ResidualVQ
+from models.codec.codec.transformers import TransformerEncoder
 
 
 def WNConv1d(*args, **kwargs):
@@ -82,7 +78,7 @@ class EncoderBlock(nn.Module):
             WNConv1d(
                 dim // 2,
                 dim,
-                kernel_size=2 * stride,
+                kernel_size=max(2 * stride, 3),
                 stride=stride,
                 padding=math.ceil(stride / 2),
             ),
@@ -92,29 +88,44 @@ class EncoderBlock(nn.Module):
         return self.block(x)
 
 
-class CodecEncoder(nn.Module):
+class LatentCodecEncoder(nn.Module):
     def __init__(
         self,
-        d_model: int = 64,
-        up_ratios: list = [4, 5, 5, 6],
+        d_mel: int = 128,
+        d_model: int = 128,
+        num_blocks: int = 4,
         out_channels: int = 256,
         use_tanh: bool = False,
         cfg=None,
     ):
         super().__init__()
 
-        d_model = cfg.d_model if cfg is not None else d_model
-        up_ratios = cfg.up_ratios if cfg is not None else up_ratios
-        out_channels = cfg.out_channels if cfg is not None else out_channels
-        use_tanh = cfg.use_tanh if cfg is not None else use_tanh
+        # use cfg to set the parameters
+        d_mel = cfg.d_mel if cfg is not None and hasattr(cfg, "d_mel") else d_mel
+        d_model = (
+            cfg.d_model if cfg is not None and hasattr(cfg, "d_model") else d_model
+        )
+        num_blocks = (
+            cfg.num_blocks
+            if cfg is not None and hasattr(cfg, "num_blocks")
+            else num_blocks
+        )
+        out_channels = (
+            cfg.out_channels
+            if cfg is not None and hasattr(cfg, "out_channels")
+            else out_channels
+        )
+        use_tanh = (
+            cfg.use_tanh if cfg is not None and hasattr(cfg, "use_tanh") else use_tanh
+        )
 
         # Create first convolution
-        self.block = [WNConv1d(1, d_model, kernel_size=7, padding=3)]
+        self.block = [WNConv1d(d_mel, d_model, kernel_size=7, padding=3)]
 
         # Create EncoderBlocks that double channels as they downsample by `stride`
-        for stride in up_ratios:
+        for _ in range(num_blocks):
             d_model *= 2
-            self.block += [EncoderBlock(d_model, stride=stride)]
+            self.block += [EncoderBlock(d_model, stride=1)]
 
         # Create last convolution
         self.block += [
@@ -131,6 +142,52 @@ class CodecEncoder(nn.Module):
 
         self.reset_parameters()
 
+    def forward(self, x, return_mel=False):
+        melspec = x
+        if return_mel:
+            return self.block(melspec), melspec
+        return self.block(melspec)
+
+    def reset_parameters(self):
+        self.apply(init_weights)
+
+
+class CNNEncoder(nn.Module):
+    def __init__(
+        self,
+        in_channels: 80,
+        d_model: int = 128,
+        num_blocks: int = 4,
+        out_channels: int = 256,
+        use_tanh: bool = False,
+    ):
+        super().__init__()
+
+        in_channels = in_channels
+        d_model = d_model
+
+        # Create first convolution
+        self.block = [WNConv1d(in_channels, d_model, kernel_size=7, padding=3)]
+
+        # Create EncoderBlocks that double channels as they downsample by `stride`
+        for _ in range(num_blocks):
+            d_model *= 2
+            self.block += [EncoderBlock(d_model, stride=1)]
+
+        # Create last convolution
+        self.block += [
+            Snake1d(d_model),
+            WNConv1d(d_model, out_channels, kernel_size=3, padding=1),
+        ]
+
+        if use_tanh:
+            self.block += [nn.Tanh()]
+
+        # Wrap black into nn.Sequential
+        self.block = nn.Sequential(*self.block)
+
+        self.reset_parameters()
+
     def forward(self, x):
         return self.block(x)
 
@@ -138,34 +195,68 @@ class CodecEncoder(nn.Module):
         self.apply(init_weights)
 
 
-class DecoderBlock(nn.Module):
-    def __init__(self, input_dim: int = 16, output_dim: int = 8, stride: int = 1):
+class SimpleCNNEncoder(nn.Module):
+    def __init__(
+        self,
+        in_channels: 80,
+        d_model: int = 128,
+        num_blocks: int = 4,
+        out_channels: int = 256,
+        use_tanh: bool = False,
+    ):
         super().__init__()
-        self.block = nn.Sequential(
-            Snake1d(input_dim),
-            WNConvTranspose1d(
-                input_dim,
-                output_dim,
-                kernel_size=2 * stride,
-                stride=stride,
-                padding=stride // 2 + stride % 2,
-                output_padding=stride % 2,
-            ),
-            ResidualUnit(output_dim, dilation=1),
-            ResidualUnit(output_dim, dilation=3),
-            ResidualUnit(output_dim, dilation=9),
-        )
+
+        in_channels = in_channels
+        d_model = d_model
+
+        # Create first convolution
+        self.block = [WNConv1d(in_channels, d_model, kernel_size=7, padding=3)]
+
+        # Create EncoderBlocks that double channels as they downsample by `stride`
+        for _ in range(num_blocks):
+            d_model *= 2
+            self.block += [
+                nn.Sequential(
+                    ResidualUnit(d_model // 2, dilation=1),
+                    ResidualUnit(d_model // 2, dilation=2),
+                    ResidualUnit(d_model // 2, dilation=3),
+                    Snake1d(d_model // 2),
+                    WNConv1d(
+                        d_model // 2,
+                        d_model,
+                        kernel_size=max(2 * 1, 3),
+                        stride=1,
+                        padding=math.ceil(1 / 2),
+                    ),
+                )
+            ]
+
+        # Create last convolution
+        self.block += [
+            Snake1d(d_model),
+            nn.Conv1d(d_model, out_channels, kernel_size=1),
+        ]
+
+        if use_tanh:
+            self.block += [nn.Tanh()]
+
+        # Wrap black into nn.Sequential
+        self.block = nn.Sequential(*self.block)
+
+        self.reset_parameters()
 
     def forward(self, x):
         return self.block(x)
 
+    def reset_parameters(self):
+        self.apply(init_weights)
 
-class CodecDecoder(nn.Module):
+
+class LatentCodecDecoderWithTimbre(nn.Module):
     def __init__(
         self,
+        d_mel: int = 128,
         in_channels: int = 256,
-        upsample_initial_channel: int = 1536,
-        up_ratios: list = [5, 5, 4, 2],
         num_quantizers: int = 8,
         codebook_size: int = 1024,
         codebook_dim: int = 256,
@@ -181,31 +272,22 @@ class CodecDecoder(nn.Module):
         eps: float = 1e-5,
         threshold_ema_dead_code: int = 2,
         weight_init: bool = False,
-        use_vocos: bool = False,
         vocos_dim: int = 384,
         vocos_intermediate_dim: int = 1152,
         vocos_num_layers: int = 8,
-        n_fft: int = 800,
-        hop_size: int = 200,
-        padding: str = "same",
+        ln_before_vq: bool = False,
+        use_pe: bool = True,
+        use_timbre_encoder: bool = True,
         cfg=None,
     ):
         super().__init__()
 
+        # use cfg to set the parameters
+        d_mel = cfg.d_mel if cfg is not None and hasattr(cfg, "d_mel") else d_mel
         in_channels = (
             cfg.in_channels
             if cfg is not None and hasattr(cfg, "in_channels")
             else in_channels
-        )
-        upsample_initial_channel = (
-            cfg.upsample_initial_channel
-            if cfg is not None and hasattr(cfg, "upsample_initial_channel")
-            else upsample_initial_channel
-        )
-        up_ratios = (
-            cfg.up_ratios
-            if cfg is not None and hasattr(cfg, "up_ratios")
-            else up_ratios
         )
         num_quantizers = (
             cfg.num_quantizers
@@ -274,11 +356,6 @@ class CodecDecoder(nn.Module):
             if cfg is not None and hasattr(cfg, "weight_init")
             else weight_init
         )
-        use_vocos = (
-            cfg.use_vocos
-            if cfg is not None and hasattr(cfg, "use_vocos")
-            else use_vocos
-        )
         vocos_dim = (
             cfg.vocos_dim
             if cfg is not None and hasattr(cfg, "vocos_dim")
@@ -294,12 +371,16 @@ class CodecDecoder(nn.Module):
             if cfg is not None and hasattr(cfg, "vocos_num_layers")
             else vocos_num_layers
         )
-        n_fft = cfg.n_fft if cfg is not None and hasattr(cfg, "n_fft") else n_fft
-        hop_size = (
-            cfg.hop_size if cfg is not None and hasattr(cfg, "hop_size") else hop_size
+        ln_before_vq = (
+            cfg.ln_before_vq
+            if cfg is not None and hasattr(cfg, "ln_before_vq")
+            else ln_before_vq
         )
-        padding = (
-            cfg.padding if cfg is not None and hasattr(cfg, "padding") else padding
+        use_pe = cfg.use_pe if cfg is not None and hasattr(cfg, "use_pe") else use_pe
+        use_timbre_encoder = (
+            cfg.use_timbre_encoder
+            if cfg is not None and hasattr(cfg, "use_timbre_encoder")
+            else use_timbre_encoder
         )
 
         if quantizer_type == "vq":
@@ -344,41 +425,52 @@ class CodecDecoder(nn.Module):
         else:
             raise ValueError(f"Unknown quantizer type {quantizer_type}")
 
-        if not use_vocos:
-            # Add first conv layer
-            channels = upsample_initial_channel
-            layers = [WNConv1d(in_channels, channels, kernel_size=7, padding=3)]
-
-            # Add upsampling + MRF blocks
-            for i, stride in enumerate(up_ratios):
-                input_dim = channels // 2**i
-                output_dim = channels // 2 ** (i + 1)
-                layers += [DecoderBlock(input_dim, output_dim, stride)]
-
-            # Add final conv layer
-            layers += [
-                Snake1d(output_dim),
-                WNConv1d(output_dim, 1, kernel_size=7, padding=3),
-                nn.Tanh(),
-            ]
-
-            self.model = nn.Sequential(*layers)
-
-        if use_vocos:
-            self.model = Vocos(
+        self.model = nn.Sequential(
+            VocosBackbone(
                 input_channels=in_channels,
                 dim=vocos_dim,
                 intermediate_dim=vocos_intermediate_dim,
                 num_layers=vocos_num_layers,
                 adanorm_num_embeddings=None,
-                n_fft=n_fft,
-                hop_size=hop_size,
-                padding=padding,
+            ),
+            nn.Linear(vocos_dim, d_mel),
+        )
+
+        self.use_timbre_encoder = use_timbre_encoder
+        self.ln_before_vq = ln_before_vq
+        if self.use_timbre_encoder:
+            self.timbre_encoder = TransformerEncoder(
+                enc_emb_tokens=None,
+                encoder_layer=4,
+                encoder_hidden=256,
+                encoder_head=4,
+                conv_filter_size=1024,
+                conv_kernel_size=5,
+                encoder_dropout=0.1,
+                use_cln=False,
+                use_pe=use_pe,
+                cfg=None,
             )
+
+            self.timbre_linear = nn.Linear(in_channels, in_channels * 2)
+            self.timbre_linear.bias.data[:in_channels] = 1
+            self.timbre_linear.bias.data[in_channels:] = 0
+            self.timbre_norm = nn.LayerNorm(in_channels, elementwise_affine=False)
+
+            if self.ln_before_vq:
+                self.enc_ln = nn.LayerNorm(in_channels, elementwise_affine=False)
 
         self.reset_parameters()
 
-    def forward(self, x=None, vq=False, eval_vq=False, n_quantizers=None):
+    def forward(
+        self,
+        x=None,
+        vq=False,
+        eval_vq=False,
+        n_quantizers=None,
+        speaker_embedding=None,
+        return_spk_embs=True,
+    ):
         """
         if vq is True, x = encoder output, then return quantized output;
         else, x = quantized output, then return decoder output
@@ -386,6 +478,14 @@ class CodecDecoder(nn.Module):
         if vq is True:
             if eval_vq:
                 self.quantizer.eval()
+
+            x_timbre = x
+
+            if self.ln_before_vq and self.use_timbre_encoder:
+                x = x.transpose(1, 2)
+                x = self.enc_ln(x)
+                x = x.transpose(1, 2)
+
             (
                 quantized_out,
                 all_indices,
@@ -393,15 +493,34 @@ class CodecDecoder(nn.Module):
                 all_codebook_losses,
                 all_quantized,
             ) = self.quantizer(x, n_quantizers=n_quantizers)
+
+            if self.use_timbre_encoder and return_spk_embs:
+                x_timbre = x_timbre.transpose(1, 2)
+                x_timbre = self.timbre_encoder(x_timbre, None, None)
+                x_timbre = x_timbre.transpose(1, 2)
+                spk_embs = torch.mean(x_timbre, dim=2)
+            else:
+                spk_embs = None
+
             return (
                 quantized_out,
                 all_indices,
                 all_commit_losses,
                 all_codebook_losses,
                 all_quantized,
+                spk_embs,
             )
 
-        return self.model(x)
+        if self.use_timbre_encoder:
+            style = self.timbre_linear(speaker_embedding).unsqueeze(2)  # (B, 2d, 1)
+            gamma, beta = style.chunk(2, 1)  # (B, d, 1)
+
+            x = x.transpose(1, 2)
+            x = self.timbre_norm(x)
+            x = x.transpose(1, 2)
+            x = x * gamma + beta
+
+        return self.model(x).transpose(1, 2)
 
     def quantize(self, x, n_quantizers=None):
         self.quantizer.eval()
