@@ -16,7 +16,7 @@ class GPTTTS(nn.Module):
     def __init__(
         self,
         phone_vocab_size=256,
-        target_vocab_size=1024,
+        target_vocab_size=8192,
         hidden_size=1024,
         intermediate_size=4096,
         num_hidden_layers=12,
