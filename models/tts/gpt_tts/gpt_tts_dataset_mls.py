@@ -18,8 +18,14 @@ import pandas as pd
 import rir_generator as rir
 import time
 import io
-
+from multiprocessing import Pool, Lock
+NUM_WORKERS=32
+lock = Lock()
 SAMPLE_RATE=16000
+def get_duration(file_path):
+    duration = librosa.get_duration(path=file_path, sr=SAMPLE_RATE)
+    return file_path, duration
+
 class VALLEDataset(Dataset):
     def __init__(self, args, is_valid=False):
         print(f"Initializing VALLEDataset")
@@ -39,6 +45,7 @@ class VALLEDataset(Dataset):
             'librilight_small': 'amphion:s3://amphion/Libri-light/small_15s',
             'librilight_medium': 'amphion:s3://amphion/Libri-light/medium_15s',
             'librilight_large': 'amphion:s3://amphion/Libri-light/large_15s',
+            'mls_german': 'public-dataset-p2:s3://public-dataset-p2/Multilingual-LibriSpeech/data_0321/unzip/mls_german/train/audio',
         }
 
         self.use_speaker = args.use_speaker
@@ -46,61 +53,47 @@ class VALLEDataset(Dataset):
         print(f"Using speaker: {self.use_speaker}, using noise: {self.use_noise}")
 
         self.dataset_list = dataset_list
-        meta_data_cache = []
-        self.meta_data_cache_path = os.path.join(dataset_cache_dir, "mls_train_metadata_cache.csv")
+        self.meta_data_cache = None
         
         for dataset_name in self.dataset_list:
             if dataset_name == 'mls_train':
-                try:
-                    #read meta data cache: MAIN_metadata_cache.csv
-                    print(f"Loaded metadata cache from {self.meta_data_cache_path}")
+                self.meta_data_cache_path = os.path.join(dataset_cache_dir, "mls_train_metadata_cache.csv")
+                #read meta data cache: MAIN_metadata_cache.csv
+                print(f"Loaded metadata cache from {self.meta_data_cache_path}")
+                if self.meta_data_cache == None:
                     self.meta_data_cache = pd.read_csv(self.meta_data_cache_path, encoding='utf-8')
-                    if len(self.meta_data_cache) == 0:
-                        print(f"Empty metadata cache!")
-                        raise ValueError("Empty metadata cache!")
-                    elif len(self.meta_data_cache) < 10731070: 
-                        print(f"Need to reload metadata cache!")
-                        print(f"Current size: {len(self.meta_data_cache)}")
-                        raise ValueError("Need to reload metadata cache!")
-                    print(f"Loaded {len(self.meta_data_cache)} metadata_cache")
-                except:
-                    raise NotImplementedError
-                    print(f"Creating MAIN metadata cache")
-                    for dataset in dataset_list:
-                        if dataset not in self.dataset2dir:
-                            raise ValueError(f"Unknown dataset: {dataset}")
-                        dataset_cache_path = os.path.join(dataset_cache_dir, f"{dataset}_metadata_cache.csv")
-                        if os.path.exists(dataset_cache_path):
-                            print(f"Loading metadata_cache from {dataset_cache_path}")
-                            dataset_meta_data_cache = pd.read_csv(dataset_cache_path, encoding='utf-8')
-                            assert len(dataset_meta_data_cache) > 0, f"error cache for {dataset_cache_path}"
-                        else:
-                            print(f"Creating metadata_cache for {dataset}")
-                            dataset_meta_data_cache = self.create_metadata_cache(dataset, dataset_cache_dir)
-                            print(f"Saved metadata cache to {dataset_cache_path}")
-                        meta_data_cache.append(dataset_meta_data_cache)
-                        del dataset_meta_data_cache
-                    self.meta_data_cache = pd.concat(meta_data_cache, ignore_index=True)
-                    print(f"Loaded {len(self.meta_data_cache)} metadata_cache")
-                    self.meta_data_cache.to_csv(self.meta_data_cache_path, index=False, encoding='utf-8') #保存到文件
-                    print(f"Saved MAIN metadata cache to {self.meta_data_cache_path}")
-            if dataset_name == 'mls_german':
-                cache = self.create_metadata_cache(dataset_name, dataset_cache_dir)
+                else:
+                    self.meta_data_cache.append(pd.read_csv(self.meta_data_cache_path, encoding='utf-8'))
+
+                if len(self.meta_data_cache) == 0:
+                    print(f"Empty metadata cache!")
+                    raise ValueError("Empty metadata cache!")
+                elif len(self.meta_data_cache) < 10731070: 
+                    print(f"Need to reload metadata cache!")
+                    print(f"Current size: {len(self.meta_data_cache)}")
+                    raise ValueError("Need to reload metadata cache!")
+                print(f"Loaded {len(self.meta_data_cache)} metadata_cache")
+            elif dataset_name == 'mls_german':
+                transcripts = pickle.load(open('/mnt/petrelfs/hehaorui/jiaqi/gpt-tts/mls_german_transcripts.pkl', 'rb'))
+
+
+
         # set random_state to current time
         current_time = int(time.time())
         self.meta_data_cache = self.meta_data_cache.sample(frac=1.0, random_state=current_time).reset_index(drop=True)
 
         # filter_by_length: filter_out files with duration < 3.0 or > 25.0
-        print(f"Filtering files with duration between 3.0 and 25.0 seconds")
-        print(f"Before filtering: {len(self.meta_data_cache)}")
-        self.meta_data_cache = self.meta_data_cache[(self.meta_data_cache['duration'] >= 3.0) & (self.meta_data_cache['duration'] <= 25.0)]
-        print(f"After filtering: {len(self.meta_data_cache)}")
+        # print(f"Filtering files with duration between 3.0 and 25.0 seconds")
+        # print(f"Before filtering: {len(self.meta_data_cache)}")
+        # self.meta_data_cache = self.meta_data_cache[(self.meta_data_cache['duration'] >= 3.0) & (self.meta_data_cache['duration'] <= 25.0)]
+        # print(f"After filtering: {len(self.meta_data_cache)}")
         # create speaker2speaker_id
-        self.speaker2id = self.create_speaker2id()
+        # self.speaker2id = self.create_speaker2id()
         self.all_num_frames = (self.meta_data_cache['duration']*SAMPLE_RATE).to_list()
         self.num_frame_sorted = np.array(sorted(self.all_num_frames))
         self.num_frame_indices = np.array(sorted(range(len(self.all_num_frames)), key=lambda k: self.all_num_frames[k]))
 
+        
         try:
             import pickle
             # read in phones (dict: uid -> phones)
@@ -141,7 +134,22 @@ class VALLEDataset(Dataset):
             for uid, transcript in tqdm(self.transcripts.items()):
                 self.transcripts[uid] = g2p(transcript)
             pickle.dump(self.transcripts, open('mls_phones.pkl', 'wb'))
-            
+    def save_cache_files(self, relpath2duration_path, relpath2speaker_path, index2relpath_path,
+                         relpath2duration, relpath2speaker, index2relpath):
+        def safe_write_to_file(data, file_path, mode='w'):
+            try:
+                with lock, open(file_path, mode, encoding='utf-8') as f:
+                    json.dump(data, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+            except IOError as e:
+                print(f"Error writing to {file_path}: {e}")
+        safe_write_to_file(relpath2duration, relpath2duration_path)
+        print(f"Saved relpath2duration to {relpath2duration_path}")
+        safe_write_to_file(relpath2speaker, relpath2speaker_path)
+        print(f"Saved relpath2speaker to {relpath2speaker_path}")
+        safe_write_to_file(index2relpath, index2relpath_path)
+        print(f"Saved index2relpath to {index2relpath_path}")
             
     def create_metadata_cache(self, dataset, cache_dir):
         dataset_relpath2duration_path = os.path.join(cache_dir, f"{dataset}_relpath2duration.json")
@@ -149,16 +157,17 @@ class VALLEDataset(Dataset):
         dataset_index2relpath_path = os.path.join(cache_dir, f"{dataset}_index2relpath.json")
         dataset_meta_data_cache_path = os.path.join(cache_dir, f"{dataset}_metadata_cache.csv")
 
-        if os.path.exists(dataset_relpath2duration_path) and os.path.exists(dataset_relpath2speaker_path) and os.path.exists(dataset_index2relpath_path):
-            print(f"Loading cache for {dataset}")
-            with open(dataset_relpath2duration_path, 'r', encoding='utf-8') as f:
-                relpath2duration = json.load(f)
-            with open(dataset_relpath2speaker_path, 'r', encoding='utf-8') as f:
-                relpath2speaker = json.load(f)
-            with open(dataset_index2relpath_path, 'r', encoding='utf-8') as f:
-                index2relpath = json.load(f)
-            print(f"Loaded cache for {dataset} with {len(relpath2duration)} files")
-        else:
+        # if os.path.exists(dataset_relpath2duration_path) and os.path.exists(dataset_relpath2speaker_path) and os.path.exists(dataset_index2relpath_path):
+        #     print(f"Loading cache for {dataset}")
+        #     with open(dataset_relpath2duration_path, 'r', encoding='utf-8') as f:
+        #         relpath2duration = json.load(f)
+        #     with open(dataset_relpath2speaker_path, 'r', encoding='utf-8') as f:
+        #         relpath2speaker = json.load(f)
+        #     with open(dataset_index2relpath_path, 'r', encoding='utf-8') as f:
+        #         index2relpath = json.load(f)
+        #     print(f"Loaded cache for {dataset} with {len(relpath2duration)} files")
+        # else:
+        if True:
             print(f"Creating cache for {dataset}")
             relpath2duration = {}
             relpath2speaker = {}
@@ -193,7 +202,28 @@ class VALLEDataset(Dataset):
         dataset_meta_data_cache = pd.DataFrame(meta_datas)
         dataset_meta_data_cache.to_csv(dataset_meta_data_cache_path, index=False, encoding='utf-8')
         return dataset_meta_data_cache
-
+    def get_duration_speaker_and_filter(self, dataset, audio_rel_paths):
+        print(f"Processing metadata...")
+        rel_path2duration = {}
+        rel_path2speaker = {}
+        idx2rel_path = {}
+        base_dir = self.dataset2dir[dataset]
+        full_paths = [os.path.join(base_dir, rel_path) for rel_path in audio_rel_paths]
+        with Pool(processes=NUM_WORKERS) as pool:
+            results = list(tqdm(pool.imap_unordered(get_duration, full_paths), total=len(audio_rel_paths)))
+        
+        idx = 0
+        print(f"Filtering files with duration between 3.0 and 25.0 seconds")
+        for file, duration in tqdm(results):
+            if duration > 3.0 and duration < 25.0:
+                rel_path = os.path.relpath(file, base_dir)
+                rel_path2duration[rel_path] = duration
+                speaker_id = file.split(os.sep)[-3]
+                speaker = f"{dataset}_{speaker_id}"
+                rel_path2speaker[rel_path] = speaker
+                idx2rel_path[idx] = rel_path
+                idx += 1
+        return rel_path2duration, rel_path2speaker, idx2rel_path
     def get_audio_files(self, directory):
         audio_files = []
         for root, _, files in os.walk(directory):
