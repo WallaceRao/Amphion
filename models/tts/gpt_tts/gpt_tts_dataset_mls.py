@@ -12,84 +12,315 @@ import pickle
 from models.tts.gpt_tts.g2p_old_en import process, PHPONE2ID
 from g2p_en import G2p
 import librosa
+from petrel_client.client import Client
+from torch.utils.data import Dataset
+import pandas as pd
+import rir_generator as rir
+import time
+import io
+
+SAMPLE_RATE=16000
+class VALLEDataset(Dataset):
+    def __init__(self, args, is_valid=False):
+        print(f"Initializing VALLEDataset")
+        dataset_list = args.dataset_list
+        dataset_cache_dir = args.cache_dir # cache_dir
+        print(f"args.cache_dir = ", args.cache_dir)
+        os.makedirs(dataset_cache_dir, exist_ok=True)
+        # create dataset2dir
+
+        self.client = Client('/mnt/petrelfs/hehaorui/petreloss.conf')
 
 
-class GPTTTSDataset(torch.utils.data.Dataset):
-    def __init__(self, cfg, dataset, is_valid=False):
-        assert isinstance(dataset, str)
+        self.dataset2dir = {
+            'mls_train': 'public-dataset-p2:s3://public-dataset-p2/Multilingual-LibriSpeech/data_0321/unzip/mls_english1/train/audio',
+            'mls_dev': 'public-dataset-p2:s3://public-dataset-p2/Multilingual-LibriSpeech/data_0321/unzip/mls_english1/dev/audio',
+            'mls_test': 'public-dataset-p2:s3://public-dataset-p2/Multilingual-LibriSpeech/data_0321/unzip/mls_english1/test/audio',
+            'librilight_small': 'amphion:s3://amphion/Libri-light/small_15s',
+            'librilight_medium': 'amphion:s3://amphion/Libri-light/medium_15s',
+            'librilight_large': 'amphion:s3://amphion/Libri-light/large_15s',
+        }
 
-        self.cfg = cfg
+        self.use_speaker = args.use_speaker
+        self.use_noise = args.use_noise
+        print(f"Using speaker: {self.use_speaker}, using noise: {self.use_noise}")
 
-        # the path of the processed data
-        processed_data_dir = os.path.join(cfg.preprocess.processed_dir, dataset)
-        # the name of the meta file, for example: "valid.json" and "train.json"
-        meta_file = cfg.preprocess.valid_file if is_valid else cfg.preprocess.train_file
-        # the path of the meta file
-        self.metafile_path = os.path.join(processed_data_dir, meta_file)
+        self.dataset_list = dataset_list
+        meta_data_cache = []
+        self.meta_data_cache_path = os.path.join(dataset_cache_dir, "mls_train_metadata_cache.csv")
+        
+        for dataset_name in self.dataset_list:
+            if dataset_name == 'mls_train':
+                try:
+                    #read meta data cache: MAIN_metadata_cache.csv
+                    print(f"Loaded metadata cache from {self.meta_data_cache_path}")
+                    self.meta_data_cache = pd.read_csv(self.meta_data_cache_path, encoding='utf-8')
+                    if len(self.meta_data_cache) == 0:
+                        print(f"Empty metadata cache!")
+                        raise ValueError("Empty metadata cache!")
+                    elif len(self.meta_data_cache) < 10731070: 
+                        print(f"Need to reload metadata cache!")
+                        print(f"Current size: {len(self.meta_data_cache)}")
+                        raise ValueError("Need to reload metadata cache!")
+                    print(f"Loaded {len(self.meta_data_cache)} metadata_cache")
+                except:
+                    raise NotImplementedError
+                    print(f"Creating MAIN metadata cache")
+                    for dataset in dataset_list:
+                        if dataset not in self.dataset2dir:
+                            raise ValueError(f"Unknown dataset: {dataset}")
+                        dataset_cache_path = os.path.join(dataset_cache_dir, f"{dataset}_metadata_cache.csv")
+                        if os.path.exists(dataset_cache_path):
+                            print(f"Loading metadata_cache from {dataset_cache_path}")
+                            dataset_meta_data_cache = pd.read_csv(dataset_cache_path, encoding='utf-8')
+                            assert len(dataset_meta_data_cache) > 0, f"error cache for {dataset_cache_path}"
+                        else:
+                            print(f"Creating metadata_cache for {dataset}")
+                            dataset_meta_data_cache = self.create_metadata_cache(dataset, dataset_cache_dir)
+                            print(f"Saved metadata cache to {dataset_cache_path}")
+                        meta_data_cache.append(dataset_meta_data_cache)
+                        del dataset_meta_data_cache
+                    self.meta_data_cache = pd.concat(meta_data_cache, ignore_index=True)
+                    print(f"Loaded {len(self.meta_data_cache)} metadata_cache")
+                    self.meta_data_cache.to_csv(self.meta_data_cache_path, index=False, encoding='utf-8') #保存到文件
+                    print(f"Saved MAIN metadata cache to {self.meta_data_cache_path}")
+            if dataset_name == 'mls_german':
+                cache = self.create_metadata_cache(dataset_name, dataset_cache_dir)
+        # set random_state to current time
+        current_time = int(time.time())
+        self.meta_data_cache = self.meta_data_cache.sample(frac=1.0, random_state=current_time).reset_index(drop=True)
 
-        # the metadata of your data, which is a list of dict
-        # for example: [{"Uid": "61-70968-0060", "num_frames": 160000, "text": ..., "path": ...}]
-        # uid is the unique identifier of the speech (e.g. the file name of the speech),
-        # num_frames is the number of frames of the speech,
-        # text is the text of the speech,
-        # path is the path of the speech
-        # you can change the content of the metadata according to your data
-        self.metadata = self.get_metadata()
-
-        self.g2p = G2p()
-
-        # the sorted list of speech index according to the number of frames, which is used for bucketing
-        self.all_num_frames = []
-        for i in range(len(self.metadata)):
-            self.all_num_frames.append(self.metadata[i]["num_frames"])
+        # filter_by_length: filter_out files with duration < 3.0 or > 25.0
+        print(f"Filtering files with duration between 3.0 and 25.0 seconds")
+        print(f"Before filtering: {len(self.meta_data_cache)}")
+        self.meta_data_cache = self.meta_data_cache[(self.meta_data_cache['duration'] >= 3.0) & (self.meta_data_cache['duration'] <= 25.0)]
+        print(f"After filtering: {len(self.meta_data_cache)}")
+        # create speaker2speaker_id
+        self.speaker2id = self.create_speaker2id()
+        self.all_num_frames = (self.meta_data_cache['duration']*SAMPLE_RATE).to_list()
         self.num_frame_sorted = np.array(sorted(self.all_num_frames))
-        self.num_frame_indices = np.array(
-            sorted(
-                range(len(self.all_num_frames)), key=lambda k: self.all_num_frames[k]
+        self.num_frame_indices = np.array(sorted(range(len(self.all_num_frames)), key=lambda k: self.all_num_frames[k]))
+
+        try:
+            import pickle
+            # read in phones (dict: uid -> phones)
+            self.transcripts = pickle.load(open('/mnt/petrelfs/hehaorui/jiaqi/vc-dev/mls_phones.pkl', 'rb'))
+        except:
+            # write to "mls_phones" file
+
+            # get transcripts
+            if os.path.exists('/mnt/petrelfs/hehaorui/jiaqi/vc-dev/mls_transcripts.pkl'):
+                import pickle
+                self.transcripts = pickle.load(open('/mnt/petrelfs/hehaorui/jiaqi/vc-dev/mls_transcripts.pkl', 'rb'))
+            else:
+                # read MLS dataset transcript txt into dict
+                self.transcript_path = os.path.join(self.dataset2dir['mls_train'].rstrip('audio/'), 'transcripts.txt')
+                file_bytes = self.client.get(self.transcript_path)
+                assert file_bytes is not None
+                buffer = io.BytesIO(file_bytes)
+                transcripts = buffer.getvalue()
+                del buffer
+                transcripts = transcripts.decode('utf-8')
+
+                # read MLS dataset transcript txt into dict
+                self.transcripts = {}
+                for line in transcripts.split('\n'):
+                    if line == '':
+                        continue
+                    uid, transcript = line.split('\t')
+                    self.transcripts[uid] = transcript
+
+                # dump cache
+                import pickle
+                pickle.dump(self.transcripts, open('mls_transcripts.pkl', 'wb'))
+                # uid: '4800_10003_000000'
+                # transcript: "oh my dear you must see him he expects you she answered almost gayly the procession of three moved down the long room towards a door phyllis's hand guiding the wheel-chair"
+
+            # transcripts to phones
+            from tqdm import tqdm
+            for uid, transcript in tqdm(self.transcripts.items()):
+                self.transcripts[uid] = g2p(transcript)
+            pickle.dump(self.transcripts, open('mls_phones.pkl', 'wb'))
+            
+            
+    def create_metadata_cache(self, dataset, cache_dir):
+        dataset_relpath2duration_path = os.path.join(cache_dir, f"{dataset}_relpath2duration.json")
+        dataset_relpath2speaker_path = os.path.join(cache_dir, f"{dataset}_relpath2speaker.json")
+        dataset_index2relpath_path = os.path.join(cache_dir, f"{dataset}_index2relpath.json")
+        dataset_meta_data_cache_path = os.path.join(cache_dir, f"{dataset}_metadata_cache.csv")
+
+        if os.path.exists(dataset_relpath2duration_path) and os.path.exists(dataset_relpath2speaker_path) and os.path.exists(dataset_index2relpath_path):
+            print(f"Loading cache for {dataset}")
+            with open(dataset_relpath2duration_path, 'r', encoding='utf-8') as f:
+                relpath2duration = json.load(f)
+            with open(dataset_relpath2speaker_path, 'r', encoding='utf-8') as f:
+                relpath2speaker = json.load(f)
+            with open(dataset_index2relpath_path, 'r', encoding='utf-8') as f:
+                index2relpath = json.load(f)
+            print(f"Loaded cache for {dataset} with {len(relpath2duration)} files")
+        else:
+            print(f"Creating cache for {dataset}")
+            relpath2duration = {}
+            relpath2speaker = {}
+            index2relpath = {}
+            audio_rel_paths = self.get_audio_files(self.dataset2dir[dataset])
+            random.shuffle(audio_rel_paths)
+            print(f"Loaded {len(audio_rel_paths)} files from {dataset}")
+            print(f"Generating cache for {dataset}")
+            relpath2duration, relpath2speaker, index2relpath = self.get_duration_speaker_and_filter(dataset, audio_rel_paths)
+            print(f"Generated cache for {dataset} with {len(relpath2duration)} files")
+            print(f"Saving cache for {dataset}")
+            self.save_cache_files(
+                dataset_relpath2duration_path, 
+                dataset_relpath2speaker_path,
+                dataset_index2relpath_path, 
+                relpath2duration, 
+                relpath2speaker, 
+                index2relpath
             )
-        )
+            print(f"Saved cache for {dataset}")
+
+        meta_datas = []
+        print(f"Generating metadata cache for {dataset}")
+        for idx, relpath in tqdm(index2relpath.items()):
+            temp_item = {
+                'uid': f"{dataset}#{str(idx)}",
+                'relpath': relpath,
+                'duration': relpath2duration[relpath],
+                'speaker': relpath2speaker[relpath]
+            }
+            meta_datas.append(temp_item)
+        dataset_meta_data_cache = pd.DataFrame(meta_datas)
+        dataset_meta_data_cache.to_csv(dataset_meta_data_cache_path, index=False, encoding='utf-8')
+        return dataset_meta_data_cache
+
+    def get_audio_files(self, directory):
+        audio_files = []
+        for root, _, files in os.walk(directory):
+            for file in files:
+                if file.endswith(('.flac', '.wav', '.opus')):
+                    rel_path = os.path.relpath(os.path.join(root, file), directory)
+                    audio_files.append(rel_path)
+        return audio_files
+    
+    def get_num_frames(self, index):
+        # get_num_frames(durations) by index
+        duration = self.meta_data_cache['duration'][index]
+        num_frames = int(duration * 80)
+
+        file_rel_path = self.meta_data_cache['relpath'][index]
+        uid = file_rel_path.rstrip('.flac').split('/')[-1]
+        num_frames += len(self.transcripts[uid])
+        return num_frames
+    
+    def create_speaker2id(self):
+        all_speakers = self.meta_data_cache['speaker'].unique()
+        speaker2id = {}
+        for idx, speaker in enumerate(all_speakers):
+            speaker2id[speaker] = idx
+        return speaker2id
+    
+    def snr_mixer(self, clean, noise, snr):
+        # Normalizing to -25 dB FS
+        rmsclean = (clean**2).mean()**0.5
+        epsilon = 1e-10
+        rmsclean = max(rmsclean, epsilon)
+        scalarclean = 10 ** (-25 / 20) / rmsclean
+        clean = clean * scalarclean
+
+        rmsnoise = (noise**2).mean()**0.5
+        rmsnoise = max(rmsnoise, epsilon)
+        if rmsnoise == epsilon:
+            return clean / scalarclean
+        scalarnoise = 10 ** (-25 / 20) /rmsnoise
+        noise = noise * scalarnoise
+        rmsnoise = (noise**2).mean()**0.5
+        
+        # Set the noise level for a given SNR
+        noisescalar = np.sqrt(rmsclean / (10**(snr/20)) / rmsnoise)
+        noisenewlevel = noise * noisescalar
+        noisyspeech = clean + noisenewlevel
+        noisyspeech_tensor = torch.tensor(noisyspeech, dtype=torch.float32)
+        return noisyspeech_tensor
+    
+    def add_noise(self, clean):
+        # self.noise_filenames: list of noise files
+        random_idx = np.random.randint(0, np.size(self.noise_filenames))
+        selected_noise_file = self.noise_filenames[random_idx]
+        noise, _ = librosa.load(selected_noise_file, sr=SAMPLE_RATE)
+        clean = clean.cpu().numpy()
+        if len(noise)>=len(clean):
+            noise = noise[0:len(clean)] #截取噪声的长度
+        else:
+            while len(noise)<=len(clean): #如果噪声的长度小于语音的长度
+                random_idx = (random_idx + 1)%len(self.noise_filenames) #随机读一个噪声
+                newnoise, fs = librosa.load(selected_noise_file, sr=SAMPLE_RATE)
+                noiseconcat = np.append(noise, np.zeros(int(fs * 0.2)))#在噪声后面加上0.2静音
+                noise = np.append(noiseconcat, newnoise)#拼接噪声
+        noise = noise[0:len(clean)] #截取噪声的长度
+        #随机sample一个小于20大于0的随机数
+        snr = random.uniform(0.0,15.0)
+        noisyspeech = self.snr_mixer(clean=clean, noise=noise, snr=snr) #根据随机的SNR级别，混合生成带噪音频
+        del noise
+        return noisyspeech
+    
+    def add_reverb(self, speech):
+        room_dim = [np.random.uniform(1, 12) for _ in range(3)]  # [length, width, height]
+        mic_pos = [np.random.uniform(0, dim) for dim in room_dim] # 随机选择麦克风位置
+        distance = np.random.normal(2, 4) # 确定声源与麦克风的距离
+        while distance <= 0 or distance > 5:
+            distance = np.random.normal(2, 4)
+        source_pos = [mic_pos[0] + distance, mic_pos[1], mic_pos[2]] # 随机选择声源位置，确保它在以麦克风为中心的球内
+        rt60 = np.random.uniform(0.05, 1.0) # 随机选择RT60值
+        try: 
+            rir_filter = rir.generate(
+                c=340,                  # 声速
+                fs=SAMPLE_RATE,
+                r=[mic_pos],            # 麦克风位置
+                s=source_pos,           # 声源位置
+                L=room_dim,             # 房间尺寸
+                reverberation_time=rt60,# RT60值
+                nsample=4096,           # IR长度
+            )
+            # 应用混响
+            speech_reverb = np.convolve(speech.cpu().numpy(), rir_filter[:, 0], mode='same')
+            speech = torch.tensor(speech_reverb, dtype=torch.float32)
+            return speech
+        except:
+            return speech #如果遇到ValueError: s is outside the room，直接返回没加混响的声音
 
     def __len__(self):
-        return len(self.metadata)
+        return len(self.meta_data_cache)
 
-    def get_metadata(self):
-        with open(self.metafile_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
+    def __getitem__(self, idx):
+        # Get the file rel path
+        file_rel_path = self.meta_data_cache['relpath'][idx]
+        # Get the dataset from cache uid
+        dataset_name = self.meta_data_cache['uid'][idx].split('#')[0]
+        # Get the full file path
+        full_file_path = os.path.join(self.dataset2dir[dataset_name], file_rel_path)
 
-        print("metadata len: ", len(metadata))
+        # get transcript
+        uid = file_rel_path.rstrip('.flac').split('/')[-1]
+        phone = self.transcripts[uid]
+        phone = torch.tensor(phone, dtype=torch.long)        
 
-        return metadata
-
-    def get_phone_id(self, text):
-        # convert text to phone id, you need to modify this function according to your g2p method
-        txt_struct, txt = process(text, self.g2p)
-        phone_seq = [p for w in txt_struct for p in w[1]]
-        phone_id = [PHPONE2ID[p] for p in phone_seq]
-        return phone_id
-
-    def __getitem__(self, index):
-        utt_info = self.metadata[index]
-
-        single_feature = dict()
-
-        # load speech
-        speech = librosa.load(utt_info["path"], sr=self.cfg.preprocess.sample_rate)[0]
-        # get phone id
-        text = utt_info["text"]
-        phone_id = self.get_phone_id(text)
-
-        single_feature.update(
-            {
-                "speech": speech,
-                "phone_id": phone_id,
-            }
-        )
-
-        return single_feature
-
-    def get_num_frames(self, index):
-        utt_info = self.metadata[index]
-        return utt_info["num_frames"]
+        file_bytes = self.client.get(full_file_path)
+        assert file_bytes is not None, f"file {full_file_path} not found"
+        buffer = io.BytesIO(file_bytes)
+        speech, _ = librosa.load(buffer, sr=SAMPLE_RATE)
+        speech = torch.tensor(speech, dtype=torch.float32)
+        
+        # inputs = self._get_reference_vc(speech, hop_length=200)
+        inputs = {}
+        # Get the speaker id
+        # speaker = self.meta_data_cache['speaker'][idx]
+        # speaker_id = self.speaker2id[speaker]
+        # inputs["speaker_id"] = speaker_id
+        
+        inputs['speech'] = speech # 16khz speech
+        inputs["phone_id"] = phone
+        return inputs
 
 
 class GPTTTSCollator(object):
