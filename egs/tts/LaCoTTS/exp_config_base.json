@@ -1,6 +1,6 @@
 {
     // "base_config": "config/tts.json",
-    "model_type": "LaCoTTS",
+    "model_type": "GPTTTS",
     "dataset": ["Your Dataset Name"],
     "preprocess": {
         "hop_size": 200,
@@ -71,10 +71,10 @@
             "max_position_embeddings": 2048
         }
     },
-    "log_dir": "Your log dir",
+    "log_dir": "exps",
     "train": {
         "max_epoch": 0,
-        "use_dynamic_batchsize": true,
+        "use_dynamic_batchsize": false,
         "max_tokens": 1600000,   // 1600000 = 16000 * 100 which means we use at most 100s speech for a batch
         "max_sentences": 16,
         "lr_warmup_steps": 32000,
@@ -102,5 +102,13 @@
           "num_worker": 16,
           "pin_memory": true
         }
+    },
+    "trans_exp": {
+        "dataset_list":["mls_train"],
+        "cache_dir": "/mnt/petrelfs/hehaorui/data/exp_cache/vc/",
+        "use_speaker": false,
+        "use_noise": false,
+        "noise_dir": "/mnt/petrelfs/hehaorui/data/noise/audiocaps",
+        "content_model_path": "/mnt/petrelfs/hehaorui/data/pretrained_ckpts/mhubert"
     }
 }
