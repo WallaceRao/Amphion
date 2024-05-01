@@ -201,31 +201,44 @@ class NS2Trainer(TTSTrainer):
                     f"Building criterion done in {(end - start) / 1e6:.2f}ms"
                 )
 
-        # TODO: Resume from ckpt need test/debug
+        # Resume or Finetune
         with self.accelerator.main_process_first():
             if args.resume:
-                if self.accelerator.is_main_process:
-                    self.logger.info("Resuming from checkpoint...")
-                start = time.monotonic_ns()
-                ckpt_path = self._load_model(
-                    self.checkpoint_dir,
-                    args.checkpoint_path,
-                    resume_type=args.resume_type,
-                )
-                end = time.monotonic_ns()
-                if self.accelerator.is_main_process:
+                if args.resume_from_ckpt_path == "":
+                    ## Automatically resume according to the current exprimental name
+                    self.logger.info(
+                        "Automatically resuming from latest checkpoint in {}...".format(
+                            self.checkpoint_dir
+                        )
+                    )
+                    start = time.monotonic_ns()
+                    ckpt_path = self._load_model(
+                        checkpoint_dir=self.checkpoint_dir, resume_type=args.resume_type
+                    )
+                    end = time.monotonic_ns()
                     self.logger.info(
                         f"Resuming from checkpoint done in {(end - start) / 1e6:.2f}ms"
                     )
-                self.checkpoints_path = json.load(
-                    open(os.path.join(ckpt_path, "ckpts.json"), "r")
-                )
-
-            self.checkpoint_dir = os.path.join(self.exp_dir, "checkpoint")
-            if self.accelerator.is_main_process:
-                os.makedirs(self.checkpoint_dir, exist_ok=True)
-            if self.accelerator.is_main_process:
-                self.logger.debug(f"Checkpoint directory: {self.checkpoint_dir}")
+                else:
+                    ## Resume from the given checkpoint path
+                    if not os.path.exists(args.resume_from_ckpt_path):
+                        raise ValueError(
+                            "[Error] The resumed checkpoint path {} don't exist.".format(
+                                args.resume_from_ckpt_path
+                            )
+                        )
+                    self.logger.info(
+                        "Resuming from {}...".format(args.resume_from_ckpt_path)
+                    )
+                    start = time.monotonic_ns()
+                    ckpt_path = self._load_model(
+                        checkpoint_path=args.resume_from_ckpt_path,
+                        resume_type=args.resume_type,
+                    )
+                    end = time.monotonic_ns()
+                    self.logger.info(
+                        f"Resuming from checkpoint done in {(end - start) / 1e6:.2f}ms"
+                    )
 
         # save config file path
         self.config_save_path = os.path.join(self.exp_dir, "args.json")
@@ -439,6 +452,7 @@ class NS2Trainer(TTSTrainer):
 
         # loss
         print(out.loss)
+        self.current_loss = out.loss.item()
         total_loss += out.loss
         train_losses["ce_loss"] = out.loss
 
