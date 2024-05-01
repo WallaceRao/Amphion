@@ -15,17 +15,17 @@ from transformers import (
 class GPTTTS(nn.Module):
     def __init__(
         self,
-        phone_vocab_size=256,
+        phone_vocab_size=644,
         target_vocab_size=8192,
         hidden_size=1024,
         intermediate_size=4096,
         num_hidden_layers=12,
         num_attention_heads=16,
-        pad_token_id=8448,
-        bos_target_id=8449,
-        eos_target_id=8450,
-        bos_phone_id=8451,
-        eos_phone_id=8452,
+        pad_token_id=8838,
+        bos_target_id=8839,
+        eos_target_id=8840,
+        bos_phone_id=8841,
+        eos_phone_id=8842,
         max_position_embeddings=2048,
         cfg=None,
     ):
