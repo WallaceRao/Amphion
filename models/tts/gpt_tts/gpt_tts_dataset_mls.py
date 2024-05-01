@@ -8,7 +8,6 @@ import torch
 from torch.nn.utils.rnn import pad_sequence
 from utils.data_utils import *
 from tqdm import tqdm
-import pickle
 from models.tts.gpt_tts.g2p_old_en import process, PHPONE2ID
 from g2p_en import G2p
 import librosa
@@ -25,6 +24,23 @@ SAMPLE_RATE=16000
 def get_duration(file_path):
     duration = librosa.get_duration(path=file_path, sr=SAMPLE_RATE)
     return file_path, duration
+# g2p
+from utils.g2p import PhonemeBpeTokenizer
+text_tokenizer = PhonemeBpeTokenizer()
+lang2token ={
+    'zh': "[ZH]", 
+    'ja':"[JA]", 
+    "en":"[EN]", 
+    "fr":"[FR]",
+    "kr": "[KR]",
+    "de": "[DE]",
+}
+def g2p(text, language):
+    text = text.replace("\n","").strip("")
+    lang_token = lang2token[language]
+    text = lang_token + text + lang_token
+    return text_tokenizer.tokenize(text=f"{text}".strip(),language=language)
+
 
 class VALLEDataset(Dataset):
     def __init__(self, args, is_valid=False):
@@ -54,6 +70,8 @@ class VALLEDataset(Dataset):
 
         self.dataset_list = dataset_list
         self.meta_data_cache = None
+
+        self.transcripts = None
         
         for dataset_name in self.dataset_list:
             if dataset_name == 'mls_train':
@@ -73,10 +91,14 @@ class VALLEDataset(Dataset):
                     print(f"Current size: {len(self.meta_data_cache)}")
                     raise ValueError("Need to reload metadata cache!")
                 print(f"Loaded {len(self.meta_data_cache)} metadata_cache")
+
+                import pickle
+                self.transcripts = pickle.load(open('/mnt/petrelfs/hehaorui/jiaqi/vc-dev/mls_transcripts.pkl', 'rb'))
+            
+            
             elif dataset_name == 'mls_german':
+                raise NotImplementedError
                 transcripts = pickle.load(open('/mnt/petrelfs/hehaorui/jiaqi/gpt-tts/mls_german_transcripts.pkl', 'rb'))
-
-
 
         # set random_state to current time
         current_time = int(time.time())
@@ -93,7 +115,7 @@ class VALLEDataset(Dataset):
         self.num_frame_sorted = np.array(sorted(self.all_num_frames))
         self.num_frame_indices = np.array(sorted(range(len(self.all_num_frames)), key=lambda k: self.all_num_frames[k]))
 
-        
+        return
         try:
             import pickle
             # read in phones (dict: uid -> phones)
@@ -334,6 +356,7 @@ class VALLEDataset(Dataset):
         # get transcript
         uid = file_rel_path.rstrip('.flac').split('/')[-1]
         phone = self.transcripts[uid]
+        phone = g2p(phone, 'en')[1]
         phone = torch.tensor(phone, dtype=torch.long)        
 
         file_bytes = self.client.get(full_file_path)
