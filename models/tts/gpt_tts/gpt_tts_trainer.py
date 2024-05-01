@@ -161,12 +161,8 @@ class NS2Trainer(TTSTrainer):
             if self.accelerator.is_main_process:
                 self.logger.info("Initializing accelerate...")
             start = time.monotonic_ns()
-            (
+            self.train_dataloader = self.accelerator.prepare(
                 self.train_dataloader,
-                self.valid_dataloader,
-            ) = self.accelerator.prepare(
-                self.train_dataloader,
-                self.valid_dataloader,
             )
 
         if isinstance(self.model, dict):
@@ -238,7 +234,14 @@ class NS2Trainer(TTSTrainer):
         self.task_type = "TTS"
         if self.accelerator.is_main_process:
             self.logger.info("Task type: {}".format(self.task_type))
-
+    def _count_parameters(self, model):
+        model_param = 0.0
+        if isinstance(model, dict):
+            for key, value in model.items():
+                model_param += sum(p.numel() for p in model[key].parameters())
+        else:
+            model_param = sum(p.numel() for p in model.parameters())
+        return model_param
     def _init_accelerator(self):
         self.exp_dir = os.path.join(
             os.path.abspath(self.cfg.log_dir), self.args.exp_name
@@ -271,6 +274,9 @@ class NS2Trainer(TTSTrainer):
         latent_codec_dec = LatentCodecDecoderWithTimbre(
             cfg=self.cfg.model.latent_codec.decoder
         )
+        wav_codec_enc.load_state_dict(torch.load("ckpts/wav_codec/wav_codec_enc.bin"))
+        latent_codec_enc.load_state_dict(torch.load("ckpts/latent_codec/latent_codec_enc.bin"))
+        latent_codec_dec.load_state_dict(torch.load("ckpts/latent_codec/latent_codec_dec.bin"))
 
         wav_codec_enc.eval()
         latent_codec_enc.eval()
@@ -288,13 +294,14 @@ class NS2Trainer(TTSTrainer):
         return wav_codec_enc, latent_codec_enc, latent_codec_dec
 
     def _build_dataset(self):
-        return GPTTTSDataset, GPTTTSCollator
+        from .gpt_tts_dataset_mls import VALLEDataset
+        return VALLEDataset, GPTTTSCollator
 
     def _build_dataloader(self):
         if self.cfg.train.use_dynamic_batchsize:
             print("Use Dynamic Batchsize......")
             Dataset, Collator = self._build_dataset()
-            train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
+            train_dataset = Dataset(self.cfg.trans_exp, is_valid=False)
             train_collate = Collator(self.cfg)
             batch_sampler = batch_by_size(
                 train_dataset.num_frame_indices,
@@ -326,36 +333,12 @@ class NS2Trainer(TTSTrainer):
             )
             self.accelerator.wait_for_everyone()
 
-            valid_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=True)
-            valid_collate = Collator(self.cfg)
-            batch_sampler = batch_by_size(
-                valid_dataset.num_frame_indices,
-                valid_dataset.get_num_frames,
-                max_tokens=self.cfg.train.max_tokens * self.accelerator.num_processes,
-                max_sentences=self.cfg.train.max_sentences
-                * self.accelerator.num_processes,
-                required_batch_size_multiple=self.accelerator.num_processes,
-            )
-            batches = [
-                x[
-                    self.accelerator.local_process_index :: self.accelerator.num_processes
-                ]
-                for x in batch_sampler
-                if len(x) % self.accelerator.num_processes == 0
-            ]
-            valid_loader = DataLoader(
-                valid_dataset,
-                collate_fn=valid_collate,
-                num_workers=self.cfg.train.dataloader.num_worker,
-                batch_sampler=VariableSampler(batches, drop_last=False),
-                pin_memory=self.cfg.train.dataloader.pin_memory,
-            )
-            self.accelerator.wait_for_everyone()
+            valid_loader = None
 
         else:
             print("Use Normal Batchsize......")
             Dataset, Collator = self._build_dataset()
-            train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
+            train_dataset = Dataset(self.cfg.trans_exp, is_valid=False)
             train_collate = Collator(self.cfg)
 
             train_loader = DataLoader(
@@ -367,17 +350,7 @@ class NS2Trainer(TTSTrainer):
                 pin_memory=self.cfg.train.dataloader.pin_memory,
             )
 
-            valid_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=True)
-            valid_collate = Collator(self.cfg)
-
-            valid_loader = DataLoader(
-                valid_dataset,
-                shuffle=True,
-                collate_fn=valid_collate,
-                batch_size=self.cfg.train.batch_size,
-                num_workers=self.cfg.train.dataloader.num_worker,
-                pin_memory=self.cfg.train.dataloader.pin_memory,
-            )
+            valid_loader=None
             self.accelerator.wait_for_everyone()
 
         return train_loader, valid_loader
@@ -391,7 +364,6 @@ class NS2Trainer(TTSTrainer):
 
     def _build_scheduler(self):
         lr_scheduler = get_inverse_sqrt_schedule(
-            self.cfg.train.lr_scheduler,
             optimizer=self.optimizer,
             num_warmup_steps=self.cfg.train.lr_warmup_steps,  # TODO: need to check wheather need to multiply by num_processes
         )
@@ -434,7 +406,7 @@ class NS2Trainer(TTSTrainer):
         train_stats = {}
 
         speech = batch["speech"]
-        mask = batch["mask"]
+        mask = batch["speech_mask"]
         phone_id = batch["phone_id"]
         phone_id_mask = batch["phone_id_mask"]
 
@@ -454,9 +426,11 @@ class NS2Trainer(TTSTrainer):
             target = vq_indices[0, :, :]
             # release memory
             del speech
+            del batch["speech"]
+            del batch["speech_mask"]
             torch.cuda.empty_cache()
 
-        out = self.model["generator"](
+        out = self.model(
             phone_ids=phone_id.long(),
             phone_mask=phone_id_mask.long(),
             target_ids=target.long(),
@@ -464,6 +438,7 @@ class NS2Trainer(TTSTrainer):
         )
 
         # loss
+        print(out.loss)
         total_loss += out.loss
         train_losses["ce_loss"] = out.loss
 
@@ -594,28 +569,39 @@ class NS2Trainer(TTSTrainer):
                             step=self.step,
                         )
 
-                if (
-                    self.accelerator.is_main_process
-                    and self.batch_count
-                    % (1 * self.cfg.train.gradient_accumulation_step)
-                    == 0
-                ):
-                    self.echo_log(train_losses, mode="Training")
-
                 self.step += 1
                 epoch_step += 1
+
+                if self.step % self.cfg.train.save_checkpoints_steps == 0:
+                    self.save_checkpoint()
 
         self.accelerator.wait_for_everyone()
 
         return epoch_sum_loss, epoch_losses
-
+    def save_checkpoint(self):
+        if self.accelerator.is_main_process:
+            keep_last = self.keep_last[0]
+            # 读取self.checkpoint_dir所有的folder
+            all_ckpts = os.listdir(self.checkpoint_dir)
+            if len(all_ckpts) > keep_last:
+                # 只保留keep_last个的folder in self.checkpoint_dir, sort by step  "epoch-{:04d}_step-{:07d}_loss-{:.6f}"
+                all_ckpts = sorted(all_ckpts, key=lambda x: int(x.split("_")[1].split('-')[1]))
+                for ckpt in all_ckpts[:-keep_last]:
+                    shutil.rmtree(os.path.join(self.checkpoint_dir, ckpt))
+            checkpoint_filename = "epoch-{:04d}_step-{:07d}_loss-{:.6f}".format(
+                self.epoch, self.step, self.current_loss
+            )
+            path = os.path.join(self.checkpoint_dir, checkpoint_filename)
+            self.logger.info("Saving state to {}...".format(path))
+            self.accelerator.save_state(path)
+            self.logger.info("Finished saving state.")
     def train_loop(self):
         r"""Training loop. The public entry of training process."""
         # Wait everyone to prepare before we move on
         self.accelerator.wait_for_everyone()
         # dump config file
-        if self.accelerator.is_main_process:
-            self._dump_cfg(self.config_save_path)
+        # if self.accelerator.is_main_process:
+        #     self._dump_cfg(self.config_save_path)
 
         # self.optimizer.zero_grad()
 
@@ -638,15 +624,15 @@ class NS2Trainer(TTSTrainer):
                         step=self.epoch,
                     )
 
-            valid_total_loss, valid_losses = self._valid_epoch()
-            if isinstance(valid_losses, dict):
-                for key, loss in valid_losses.items():
-                    if self.accelerator.is_main_process:
-                        self.logger.info("  |- Valid/{} Loss: {:.6f}".format(key, loss))
-                    self.accelerator.log(
-                        {"Epoch/Train {} Loss".format(key): loss},
-                        step=self.epoch,
-                    )
+            valid_total_loss, valid_losses = 0.,0.
+            # if isinstance(valid_losses, dict):
+            #     for key, loss in valid_losses.items():
+            #         if self.accelerator.is_main_process:
+            #             self.logger.info("  |- Valid/{} Loss: {:.6f}".format(key, loss))
+            #         self.accelerator.log(
+            #             {"Epoch/Train {} Loss".format(key): loss},
+            #             step=self.epoch,
+            #         )
 
             if self.accelerator.is_main_process:
                 self.logger.info("  |- Train/Loss: {:.6f}".format(train_total_loss))
@@ -665,63 +651,6 @@ class NS2Trainer(TTSTrainer):
                     self.scheduler[key].step()
             else:
                 self.scheduler.step()
-
-            # Check if hit save_checkpoint_stride and run_eval
-            run_eval = False
-            if self.accelerator.is_main_process:
-                save_checkpoint = False
-                hit_dix = []
-                for i, num in enumerate(self.save_checkpoint_stride):
-                    if self.epoch % num == 0:
-                        save_checkpoint = True
-                        hit_dix.append(i)
-                        run_eval |= self.run_eval[i]
-
-            self.accelerator.wait_for_everyone()
-            if self.accelerator.is_main_process and save_checkpoint:
-                path = os.path.join(
-                    self.checkpoint_dir,
-                    "epoch-{:04d}_step-{:07d}_loss-{:.6f}".format(
-                        self.epoch, self.step, train_total_loss
-                    ),
-                )
-                print("save state......")
-                self.accelerator.save_state(path)
-                print("finish saving state......")
-                json.dump(
-                    self.checkpoints_path,
-                    open(os.path.join(path, "ckpts.json"), "w"),
-                    ensure_ascii=False,
-                    indent=4,
-                )
-                # Remove old checkpoints
-                to_remove = []
-                for idx in hit_dix:
-                    self.checkpoints_path[idx].append(path)
-                    while len(self.checkpoints_path[idx]) > self.keep_last[idx]:
-                        to_remove.append((idx, self.checkpoints_path[idx].pop(0)))
-
-                # Search conflicts
-                total = set()
-                for i in self.checkpoints_path:
-                    total |= set(i)
-                do_remove = set()
-                for idx, path in to_remove[::-1]:
-                    if path in total:
-                        self.checkpoints_path[idx].insert(0, path)
-                    else:
-                        do_remove.add(path)
-
-                # Remove old checkpoints
-                for path in do_remove:
-                    shutil.rmtree(path, ignore_errors=True)
-                    if self.accelerator.is_main_process:
-                        self.logger.debug(f"Remove old checkpoint: {path}")
-
-            self.accelerator.wait_for_everyone()
-            if run_eval:
-                # TODO: run evaluation
-                pass
 
             # Update info for each epoch
             self.epoch += 1
