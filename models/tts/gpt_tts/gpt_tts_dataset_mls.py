@@ -236,11 +236,12 @@ class VALLEDataset(Dataset):
     def get_num_frames(self, index):
         # get_num_frames(durations) by index
         duration = self.meta_data_cache['duration'][index]
-        num_frames = int(duration * 80)
+        num_frames = duration * SAMPLE_RATE
+        # num_frames = int(duration * 80)
 
-        file_rel_path = self.meta_data_cache['relpath'][index]
-        uid = file_rel_path.rstrip('.flac').split('/')[-1]
-        num_frames += len(self.transcripts[uid])
+        # file_rel_path = self.meta_data_cache['relpath'][index]
+        # uid = file_rel_path.rstrip('.flac').split('/')[-1]
+        # num_frames += len(self.transcripts[uid])
         return num_frames
     
     def create_speaker2id(self):
