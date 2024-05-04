@@ -204,41 +204,21 @@ class NS2Trainer(TTSTrainer):
         # Resume or Finetune
         with self.accelerator.main_process_first():
             if args.resume:
-                if args.resume_from_ckpt_path == "":
-                    ## Automatically resume according to the current exprimental name
-                    self.logger.info(
-                        "Automatically resuming from latest checkpoint in {}...".format(
-                            self.checkpoint_dir
-                        )
+                ## Automatically resume according to the current exprimental name
+                print(
+                    "Automatically resuming from latest checkpoint in {}...".format(
+                        self.checkpoint_dir
                     )
-                    start = time.monotonic_ns()
-                    ckpt_path = self._load_model(
-                        checkpoint_dir=self.checkpoint_dir, resume_type=args.resume_type
-                    )
-                    end = time.monotonic_ns()
-                    self.logger.info(
-                        f"Resuming from checkpoint done in {(end - start) / 1e6:.2f}ms"
-                    )
-                else:
-                    ## Resume from the given checkpoint path
-                    if not os.path.exists(args.resume_from_ckpt_path):
-                        raise ValueError(
-                            "[Error] The resumed checkpoint path {} don't exist.".format(
-                                args.resume_from_ckpt_path
-                            )
-                        )
-                    self.logger.info(
-                        "Resuming from {}...".format(args.resume_from_ckpt_path)
-                    )
-                    start = time.monotonic_ns()
-                    ckpt_path = self._load_model(
-                        checkpoint_path=args.resume_from_ckpt_path,
-                        resume_type=args.resume_type,
-                    )
-                    end = time.monotonic_ns()
-                    self.logger.info(
-                        f"Resuming from checkpoint done in {(end - start) / 1e6:.2f}ms"
-                    )
+                )
+                start = time.monotonic_ns()
+                ckpt_path = self._load_model(
+                    checkpoint_dir=self.checkpoint_dir, resume_type=args.resume_type
+                )
+                end = time.monotonic_ns()
+                print(
+                    f"Resuming from checkpoint done in {(end - start) / 1e6:.2f}ms"
+                )
+                
 
         # save config file path
         self.config_save_path = os.path.join(self.exp_dir, "args.json")
@@ -324,7 +304,7 @@ class NS2Trainer(TTSTrainer):
                 * self.accelerator.num_processes,
                 required_batch_size_multiple=self.accelerator.num_processes,
             )
-            np.random.seed(980205)
+            np.random.seed(980209)
             np.random.shuffle(batch_sampler)
             print(batch_sampler[:1])
             batches = [
@@ -451,7 +431,6 @@ class NS2Trainer(TTSTrainer):
         )
 
         # loss
-        print(out.loss)
         self.current_loss = out.loss.item()
         total_loss += out.loss
         train_losses["ce_loss"] = out.loss
@@ -556,6 +535,7 @@ class NS2Trainer(TTSTrainer):
         epoch_sum_loss: float = 0.0
         epoch_losses: dict = {}
         epoch_step: int = 0
+        ema_loss = None
 
         for batch in self.train_dataloader:
             # Put the data to cuda device
@@ -568,7 +548,7 @@ class NS2Trainer(TTSTrainer):
             with self.accelerator.accumulate(self.model):
                 total_loss, train_losses, training_stats = self._train_step(batch)
             self.batch_count += 1
-
+            ema_loss = 0.98 * ema_loss + 0.02 * self.current_loss if ema_loss is not None else self.current_loss
             # Update info for each step
             # TODO: step means BP counts or batch counts?
             if self.batch_count % self.cfg.train.gradient_accumulation_step == 0:
@@ -589,6 +569,10 @@ class NS2Trainer(TTSTrainer):
                 if self.step % self.cfg.train.save_checkpoints_steps == 0:
                     self.save_checkpoint()
 
+                if self.accelerator.is_main_process:
+                    if self.step % 100 == 0:
+                        print(f'EMA Loss: {ema_loss:.6f}')
+
         self.accelerator.wait_for_everyone()
 
         return epoch_sum_loss, epoch_losses
@@ -597,6 +581,9 @@ class NS2Trainer(TTSTrainer):
             keep_last = self.keep_last[0]
             # 读取self.checkpoint_dir所有的folder
             all_ckpts = os.listdir(self.checkpoint_dir)
+
+            all_ckpts = filter(lambda x: x.startswith("epoch"), all_ckpts)
+            all_ckpts = list(all_ckpts)
             if len(all_ckpts) > keep_last:
                 # 只保留keep_last个的folder in self.checkpoint_dir, sort by step  "epoch-{:04d}_step-{:07d}_loss-{:.6f}"
                 all_ckpts = sorted(all_ckpts, key=lambda x: int(x.split("_")[1].split('-')[1]))
