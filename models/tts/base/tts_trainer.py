@@ -306,10 +306,13 @@ class TTSTrainer(BaseTrainer):
         method after** ``accelerator.prepare()``.
         """
         if checkpoint_path is None:
-            ls = [str(i) for i in Path(checkpoint_dir).glob("*")]
+            all_ckpts = os.listdir(checkpoint_dir)
+            all_ckpts = filter(lambda x: x.startswith("epoch"), all_ckpts)
+            ls = list(all_ckpts)
+            ls = [os.path.join(checkpoint_dir, i) for i in ls]
             ls.sort(key=lambda x: int(x.split("_")[-2].split("-")[-1]), reverse=True)
             checkpoint_path = ls[0]
-            self.logger.info("Resume from {}".format(checkpoint_path))
+            print("Resume from {}".format(checkpoint_path))
 
         if resume_type in ["resume", ""]:
             # Load all the things, including model weights, optimizer, scheduler, and random states.
