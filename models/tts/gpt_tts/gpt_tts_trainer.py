@@ -267,9 +267,13 @@ class NS2Trainer(TTSTrainer):
         latent_codec_dec = LatentCodecDecoderWithTimbre(
             cfg=self.cfg.model.latent_codec.decoder
         )
-        wav_codec_enc.load_state_dict(torch.load("ckpts/wav_codec/wav_codec_enc.bin"))
-        latent_codec_enc.load_state_dict(torch.load("ckpts/latent_codec/latent_codec_enc.bin"))
-        latent_codec_dec.load_state_dict(torch.load("ckpts/latent_codec/latent_codec_dec.bin"))
+        # wav_codec_enc.load_state_dict(torch.load("ckpts/wav_codec/wav_codec_enc.bin"))
+        # latent_codec_enc.load_state_dict(torch.load("ckpts/latent_codec/latent_codec_enc.bin"))
+        # latent_codec_dec.load_state_dict(torch.load("ckpts/latent_codec/latent_codec_dec.bin"))
+        wav_codec_enc.load_state_dict(torch.load(self.cfg.model.wav_codec.encoder.pretrained_ckpt))
+        latent_codec_enc.load_state_dict(torch.load(self.cfg.model.latent_codec.encoder.pretrained_ckpt))
+        latent_codec_dec.load_state_dict(torch.load(self.cfg.model.latent_codec.decoder.pretrained_ckpt))
+
 
         wav_codec_enc.eval()
         latent_codec_enc.eval()

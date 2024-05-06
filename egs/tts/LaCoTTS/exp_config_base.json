@@ -16,7 +16,8 @@
                 "d_model": 96,
                 "num_blocks": 4,
                 "out_channels": 256,
-                "use_tanh": false
+                "use_tanh": false,
+                "pretrained_ckpt": "ckpts/latent_codec/latent_codec_enc.bin"
             },
             "decoder": {
                 "in_channels": 256,
@@ -29,16 +30,17 @@
                 "vocos_intermediate_dim": 4096,
                 "vocos_num_layers": 16,
                 "ln_before_vq": true,
-                "use_pe": false
-            },
-            "pretrained_ckpt": "..."       
+                "use_pe": false,
+                "pretrained_ckpt": "ckpts/latent_codec/latent_codec_dec.bin"
+            }     
         },
         "wav_codec": {
             "encoder": {
                 "d_model": 96,
                 "out_channels": 128,
                 "up_ratios": [2, 4, 5, 5],
-                "use_tanh": false
+                "use_tanh": false,
+                "pretrained_ckpt": "ckpts/wav_codec/wav_codec_enc.bin"
             },
             "decoder": {
                 "in_channels": 128,
@@ -52,9 +54,9 @@
                 "use_vocos": true,
                 "vocos_dim": 512,
                 "vocos_intermediate_dim": 4096,
-                "vocos_num_layers": 24
-            },
-            "pretrained_ckpt": "..."
+                "vocos_num_layers": 24,
+                "pretrained_ckpt": "ckpts/wav_codec/wav_codec_dec.bin"
+            }
         },
         "gpt_tts": {
             "phone_vocab_size": 644,
