@@ -14,18 +14,7 @@ from torch.utils.data import ConcatDataset, DataLoader
 from models.tts.base.tts_trainer import TTSTrainer
 from models.base.base_trainer import BaseTrainer
 from models.base.base_sampler import VariableSampler
-from models.tts.gpt_tts.gpt_tts_dataset import (
-    GPTTTSDataset,
-    GPTTTSCollator,
-    batch_by_size,
-)
 from torch.utils.data.sampler import BatchSampler, SequentialSampler
-from models.tts.gpt_tts.gpt_tts import GPTTTS
-from models.codec.codec_latent.codec_latent import (
-    LatentCodecEncoder,
-    LatentCodecDecoderWithTimbre,
-)
-from models.codec.amphion_codec.codec import CodecEncoder, CodecDecoder
 from torch.optim import Adam, AdamW
 from torch.nn import MSELoss, L1Loss
 import torch.nn.functional as F
@@ -35,8 +24,20 @@ import accelerate
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration
 
+from models.codec.kmeans.kmeans_dataset import (
+    KMeansDataset,
+    KMeansCollator,
+)
+from models.tts.gpt_tts.gpt_tts_dataset import batch_by_size
 
-class NS2Trainer(TTSTrainer):
+from models.codec.kmeans.kmeans_model import KMeans, KMeansEMA
+
+from einops import rearrange
+
+from transformers import Wav2Vec2BertModel
+
+
+class KMeansTrainer(TTSTrainer):
     def __init__(self, args, cfg):
         self.args = args
         self.cfg = cfg
@@ -137,11 +138,6 @@ class NS2Trainer(TTSTrainer):
                 self.logger.info(
                     f"Model parameters: {self._count_parameters(self.model)/1e6:.2f}M"
                 )
-
-        # setup wav codec encoder, latent codec encoder, latent codec decoder
-        self.wav_codec_enc, self.latent_codec_enc, self.latent_codec_dec = (
-            self._build_codec()
-        )
 
         # optimizer & scheduler
         with self.accelerator.main_process_first():
@@ -256,48 +252,21 @@ class NS2Trainer(TTSTrainer):
             self.accelerator.init_trackers(self.args.exp_name)
 
     def _build_model(self):
-        model = GPTTTS(cfg=self.cfg.model.gpt_tts)
+        if self.cfg.model.type == "kmeans":
+            model = KMeans(cfg=self.cfg.model.kmeans)
+        elif self.cfg.model.type == "kmeans_ema":
+            model = KMeansEMA(cfg=self.cfg.model.kmeans)
         return model
 
-    def _build_codec(self):
-
-        wav_codec_enc = CodecEncoder(cfg=self.cfg.model.wav_codec.encoder)
-        latent_codec_enc = LatentCodecEncoder(cfg=self.cfg.model.latent_codec.encoder)
-        latent_codec_dec = LatentCodecDecoderWithTimbre(
-            cfg=self.cfg.model.latent_codec.decoder
-        )
-        # wav_codec_enc.load_state_dict(torch.load("ckpts/wav_codec/wav_codec_enc.bin"))
-        # latent_codec_enc.load_state_dict(torch.load("ckpts/latent_codec/latent_codec_enc.bin"))
-        # latent_codec_dec.load_state_dict(torch.load("ckpts/latent_codec/latent_codec_dec.bin"))
-        wav_codec_enc.load_state_dict(
-            torch.load(self.cfg.model.wav_codec.encoder.pretrained_ckpt)
-        )
-        latent_codec_enc.load_state_dict(
-            torch.load(self.cfg.model.latent_codec.encoder.pretrained_ckpt)
-        )
-        latent_codec_dec.load_state_dict(
-            torch.load(self.cfg.model.latent_codec.decoder.pretrained_ckpt)
-        )
-
-        wav_codec_enc.eval()
-        latent_codec_enc.eval()
-        latent_codec_dec.eval()
-
-        wav_codec_enc.requires_grad_(False)
-        latent_codec_enc.requires_grad_(False)
-        latent_codec_dec.requires_grad_(False)
-
-        # to device
-        wav_codec_enc = wav_codec_enc.to(self.accelerator.device)
-        latent_codec_enc = latent_codec_enc.to(self.accelerator.device)
-        latent_codec_dec = latent_codec_dec.to(self.accelerator.device)
-
-        return wav_codec_enc, latent_codec_enc, latent_codec_dec
-
-    def _build_dataset(self):
-        from .gpt_tts_dataset_mls import VALLEDataset
-
-        return VALLEDataset, GPTTTSCollator
+    def _build_semantic_model(self):
+        self.semantic_model = Wav2Vec2BertModel.from_pretrained("facebook/w2v-bert-2.0")
+        self.semantic_model.eval()
+        self.semantic_model.to(self.accelerator.device)
+        self.layer_idx = 15
+        if self.layer_idx == 23:
+            self.output_idx = 0
+        else:
+            self.output_idx = self.layer_idx + 2
 
     def _build_dataloader(self):
         if self.cfg.train.use_dynamic_batchsize:
@@ -358,7 +327,7 @@ class NS2Trainer(TTSTrainer):
         return train_loader, valid_loader
 
     def _build_optimizer(self):
-        optimizer = torch.optim.AdamW(
+        optimizer = torch.optim.Adam(
             filter(lambda p: p.requires_grad, self.model.parameters()),
             **self.cfg.train.adam,
         )
@@ -372,8 +341,10 @@ class NS2Trainer(TTSTrainer):
         return lr_scheduler
 
     def _build_criterion(self):
-        criterion = torch.nn.CrossEntropyLoss(reduction="mean")
-        return criterion
+        criteria = dict()
+        criteria["l1_loss"] = torch.nn.L1Loss(reduction="mean")
+        criteria["l2_loss"] = torch.nn.MSELoss(reduction="mean")
+        return criteria
 
     def write_summary(self, losses, stats):
         for key, value in losses.items():
@@ -407,45 +378,44 @@ class NS2Trainer(TTSTrainer):
         total_loss = 0
         train_stats = {}
 
-        speech = batch["speech"]
-        mask = batch["speech_mask"]
-        phone_id = batch["phone_id"]
-        phone_id_mask = batch["phone_id_mask"]
+        input_features = batch["input_features"]
+        attention_mask = batch["attention_mask"]
 
         with torch.no_grad():
-            vq_emb = self.wav_codec_enc(speech.unsqueeze(1))
-            vq_emb = self.latent_codec_enc(vq_emb)
-            (
-                _,
-                vq_indices,
-                _,
-                _,
-                _,
-                _,
-            ) = self.latent_codec_dec(
-                vq_emb, vq=True, eval_vq=False, return_spk_embs=False
+            vq_emb = self.semantic_model(
+                input_features=input_features,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
             )
-            target = vq_indices[0, :, :]
-            # release memory
-            del speech
-            del batch["speech"]
-            del batch["speech_mask"]
-            torch.cuda.empty_cache()
+            feat = vq_emb.hidden_states[self.output_idx]  # B x T x C
+            feat = (feat - self.mean.to(feat)) / self.std.to(feat)
 
-        out = self.model(
-            phone_ids=phone_id.long(),
-            phone_mask=phone_id_mask.long(),
-            target_ids=target.long(),
-            target_mask=mask.long(),
-        )
+        quant_feat, codebook_loss, perp = self.model(feat)
+        valid_mask = attention_mask.bool()
 
-        # loss
-        self.current_loss = out.loss.item()
-        total_loss += out.loss
-        train_losses["ce_loss"] = out.loss
+        if codebook_loss is None:
+            # a trick to allow gradient, in fact, we use EMA to update the codebook
+            codebook_loss = self.model.module.dumy_emb.weight.sum()
+            # true codebook loss for logging
+            codebook_loss_for_log = torch.nn.functional.mse_loss(
+                quant_feat, feat, reduction="none"
+            )
+            codebook_loss_for_log = (
+                codebook_loss_for_log * valid_mask[:, :, None]
+            ).sum() / valid_mask.sum()
+            train_losses["codebook_loss"] = codebook_loss_for_log
+            del codebook_loss_for_log
+        else:
+            codebook_loss = (
+                codebook_loss * valid_mask[:, :, None]
+            ).sum() / valid_mask.sum()
+            train_losses["codebook_loss"] = codebook_loss
+
+        total_loss += codebook_loss
+
+        train_losses["prep"] = perp
 
         self.optimizer.zero_grad()
-        # total_loss.backward()
         self.accelerator.backward(total_loss)
         if self.accelerator.sync_gradients:
             self.accelerator.clip_grad_norm_(
@@ -465,39 +435,45 @@ class NS2Trainer(TTSTrainer):
         total_loss = 0
         valid_stats = {}
 
-        speech = batch["speech"]
-        mask = batch["mask"]
-        phone_id = batch["phone_id"]
-        phone_id_mask = batch["phone_id_mask"]
+        input_features = batch["input_features"]
+        attention_mask = batch["attention_mask"]
 
         with torch.no_grad():
-            vq_emb = self.wav_codec_enc(speech.unsqueeze(1))
-            vq_emb = self.latent_codec_enc(vq_emb)
-            (
-                _,
-                vq_indices,
-                _,
-                _,
-                _,
-                _,
-            ) = self.latent_codec_dec(
-                vq_emb, vq=True, eval_vq=False, return_spk_embs=False
+            vq_emb = self.semantic_model(
+                input_features=input_features,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
             )
-            target = vq_indices[0, :, :]
-            # release memory
-            del speech
-            torch.cuda.empty_cache()
+            feat = vq_emb.hidden_states[self.output_idx]  # B x T x C
+            feat = (feat - self.mean.to(feat)) / self.std.to(feat)
 
-        out = self.model["generator"](
-            phone_ids=phone_id.long(),
-            phone_mask=phone_id_mask.long(),
-            target_ids=target.long(),
-            target_mask=mask.long(),
-        )
+        quant_feat, codebook_loss, perp = self.model(feat)
+        valid_mask = attention_mask.bool()
 
-        # loss
-        total_loss += out.loss
-        valid_losses["ce_loss"] = out.loss
+        if codebook_loss is None:
+            # a trick to allow gradient, in fact, we use EMA to update the codebook
+            codebook_loss = self.model.module.dumy_emb.weight.sum()
+            # true codebook loss for logging
+            codebook_loss_for_log = torch.nn.functional.mse_loss(
+                quant_feat, feat, reduction="none"
+            )
+            codebook_loss_for_log = (
+                codebook_loss_for_log * valid_mask[:, :, None]
+            ).sum() / valid_mask.sum()
+            valid_losses["codebook_loss"] = codebook_loss_for_log
+            del codebook_loss_for_log
+        else:
+            codebook_loss = (
+                codebook_loss * valid_mask[:, :, None]
+            ).sum() / valid_mask.sum()
+            valid_losses["codebook_loss"] = codebook_loss
+
+        total_loss += codebook_loss
+
+        valid_losses["prep"] = perp
+
+        for item in valid_losses:
+            valid_losses[item] = valid_losses[item].item()
 
         return (total_loss.item(), valid_losses, valid_stats)
 
