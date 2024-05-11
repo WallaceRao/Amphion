@@ -56,7 +56,7 @@ class KMeansTrainer(TTSTrainer):
                 )
                 self.logger = Logger(self.log_file, level=self.args.log_level).logger
 
-        self.time_window = ValueWindow(50)
+        self.time_window = ValueWindow(100)
 
         if self.accelerator.is_main_process:
             # Log some info
@@ -138,6 +138,9 @@ class KMeansTrainer(TTSTrainer):
                 self.logger.info(
                     f"Model parameters: {self._count_parameters(self.model)/1e6:.2f}M"
                 )
+
+        # setup semantic model
+        self._build_semantic_model()
 
         # optimizer & scheduler
         with self.accelerator.main_process_first():
@@ -267,12 +270,21 @@ class KMeansTrainer(TTSTrainer):
             self.output_idx = 0
         else:
             self.output_idx = self.layer_idx + 2
+        stat_mean_var = torch.load(self.cfg.model.stat_mean_var_path)
+        self.semantic_mean = stat_mean_var["mean"]
+        self.semantic_std = torch.sqrt(stat_mean_var["var"])
+        self.semantic_mean = self.semantic_mean.to(self.accelerator.device)
+        self.semantic_std = self.semantic_std.to(self.accelerator.device)
+
+    def _build_dataset(self):
+
+        return KMeansDataset, KMeansCollator
 
     def _build_dataloader(self):
         if self.cfg.train.use_dynamic_batchsize:
             print("Use Dynamic Batchsize......")
             Dataset, Collator = self._build_dataset()
-            train_dataset = Dataset(self.cfg.trans_exp, is_valid=False)
+            train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
             train_collate = Collator(self.cfg)
             batch_sampler = batch_by_size(
                 train_dataset.num_frame_indices,
@@ -309,7 +321,8 @@ class KMeansTrainer(TTSTrainer):
         else:
             print("Use Normal Batchsize......")
             Dataset, Collator = self._build_dataset()
-            train_dataset = Dataset(self.cfg.trans_exp, is_valid=False)
+            train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
+            train_dataset = Dataset(is_valid=False)
             train_collate = Collator(self.cfg)
 
             train_loader = DataLoader(
@@ -388,14 +401,17 @@ class KMeansTrainer(TTSTrainer):
                 output_hidden_states=True,
             )
             feat = vq_emb.hidden_states[self.output_idx]  # B x T x C
-            feat = (feat - self.mean.to(feat)) / self.std.to(feat)
+            feat = (feat - self.semantic_mean.to(feat)) / self.semantic_std.to(feat)
 
         quant_feat, codebook_loss, perp = self.model(feat)
         valid_mask = attention_mask.bool()
 
         if codebook_loss is None:
             # a trick to allow gradient, in fact, we use EMA to update the codebook
-            codebook_loss = self.model.module.dumy_emb.weight.sum()
+            if self.accelerator.num_processes > 1:
+                codebook_loss = self.model.module.dumy_emb.weight.sum()
+            else:
+                codebook_loss = self.model.dumy_emb.weight.sum()
             # true codebook loss for logging
             codebook_loss_for_log = torch.nn.functional.mse_loss(
                 quant_feat, feat, reduction="none"
@@ -427,6 +443,8 @@ class KMeansTrainer(TTSTrainer):
         for item in train_losses:
             train_losses[item] = train_losses[item].item()
 
+        train_losses["batch_size"] = input_features.shape[0]
+
         return (total_loss.item(), train_losses, train_stats)
 
     @torch.inference_mode()
@@ -445,7 +463,7 @@ class KMeansTrainer(TTSTrainer):
                 output_hidden_states=True,
             )
             feat = vq_emb.hidden_states[self.output_idx]  # B x T x C
-            feat = (feat - self.mean.to(feat)) / self.std.to(feat)
+            feat = (feat - self.semantic_mean.to(feat)) / self.semantic_std.to(feat)
 
         quant_feat, codebook_loss, perp = self.model(feat)
         valid_mask = attention_mask.bool()
@@ -533,11 +551,11 @@ class KMeansTrainer(TTSTrainer):
             with self.accelerator.accumulate(self.model):
                 total_loss, train_losses, training_stats = self._train_step(batch)
             self.batch_count += 1
-            ema_loss = (
-                0.98 * ema_loss + 0.02 * self.current_loss
-                if ema_loss is not None
-                else self.current_loss
-            )
+            # ema_loss = (
+            #     0.98 * ema_loss + 0.02 * self.current_loss
+            #     if ema_loss is not None
+            #     else self.current_loss
+            # )
             # Update info for each step
             # TODO: step means BP counts or batch counts?
             if self.batch_count % self.cfg.train.gradient_accumulation_step == 0:
@@ -558,9 +576,9 @@ class KMeansTrainer(TTSTrainer):
                 if self.step % self.cfg.train.save_checkpoints_steps == 0:
                     self.save_checkpoint()
 
-                if self.accelerator.is_main_process:
-                    if self.step % 100 == 0:
-                        print(f"EMA Loss: {ema_loss:.6f}")
+                # if self.accelerator.is_main_process:
+                #     if self.step % 100 == 0:
+                #         print(f"EMA Loss: {ema_loss:.6f}")
 
         self.accelerator.wait_for_everyone()
 

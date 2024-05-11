@@ -1,0 +1,64 @@
+{
+    // "base_config": "config/tts.json",
+    "model_type": "KMeans",
+    "dataset": ["libritts-train-clean-100"],
+    "preprocess": {
+        "hop_size": 200,
+        "sample_rate": 16000,
+        "processed_dir": "/home/t-zeqianju/yuancwang/temp_test_dataset",
+        "valid_file": "valid.json",
+        "train_file": "train.json"
+    },
+    "model": {
+        "type": "kmeans_ema",
+        "stat_mean_var_path": "/home/t-zeqianju/yuancwang/mls_wav2vec2bert_stats.pt",
+        "kmeans": {
+            "codebook_size": 1024,
+            "codebook_dim": 1024,
+            "kmeans_init": true,
+            "kmeans_iters": 10,
+            "decay": 0.8,
+            "eps": 1e-5
+        }
+    },
+    "log_dir": "/blob/v-yuancwang/codec_ckpt/semantic_kmeans",
+    "train": {
+        "max_epoch": 0,
+        "use_dynamic_batchsize": true,
+        "max_tokens": 800000,
+        "max_sentences": 16,
+        "lr_warmup_steps": 10000,
+        "lr_scheduler": "inverse_sqrt",
+        "num_train_steps": 100000,
+        "adam": {
+            "lr": 1e-4
+        },
+        "ddp": false,
+        "random_seed": 114,
+        "batch_size": 10,
+        "epochs": 5000,
+        "max_steps": 1000000,
+        "total_training_steps": 800000,
+        "save_summary_steps": 500,
+        "save_checkpoints_steps": 1000,
+        "valid_interval": 2000,
+        "keep_checkpoint_max": 100,
+        "gradient_accumulation_step": 1,
+        "tracker": ["tensorboard"],
+        "save_checkpoint_stride": [1],
+        "keep_last": [1],
+        "run_eval": [true],
+        "dataloader": {
+          "num_worker": 4,
+          "pin_memory": true
+        }
+    }
+    // "trans_exp": {
+    //     "dataset_list":["mls_train"],
+    //     "cache_dir": "/mnt/petrelfs/hehaorui/data/exp_cache/vc/",
+    //     "use_speaker": false,
+    //     "use_noise": false,
+    //     "noise_dir": "/mnt/petrelfs/hehaorui/data/noise/audiocaps",
+    //     "content_model_path": "/mnt/petrelfs/hehaorui/data/pretrained_ckpts/mhubert"
+    // }
+}

@@ -7,21 +7,23 @@ import argparse
 
 import torch
 
-from models.tts.fastspeech2.fs2_trainer import FastSpeech2Trainer
-from models.tts.vits.vits_trainer import VITSTrainer
-from models.tts.valle.valle_trainer import VALLETrainer
-from models.tts.naturalspeech2.ns2_trainer import NS2Trainer
+# from models.tts.fastspeech2.fs2_trainer import FastSpeech2Trainer
+# from models.tts.vits.vits_trainer import VITSTrainer
+# from models.tts.valle.valle_trainer import VALLETrainer
+# from models.tts.naturalspeech2.ns2_trainer import NS2Trainer
 from models.tts.gpt_tts.gpt_tts_trainer import NS2Trainer as GPTTTSTrainer
+from models.codec.kmeans.kmeans_trainer import KMeansTrainer
 from utils.util import load_config
 
 
 def build_trainer(args, cfg):
     supported_trainer = {
-        "FastSpeech2": FastSpeech2Trainer,
-        "VITS": VITSTrainer,
-        "VALLE": VALLETrainer,
-        "NaturalSpeech2": NS2Trainer,
+        # "FastSpeech2": FastSpeech2Trainer,
+        # "VITS": VITSTrainer,
+        # "VALLE": VALLETrainer,
+        # "NaturalSpeech2": NS2Trainer,
         "GPTTTS": GPTTTSTrainer,
+        "KMeans": KMeansTrainer,
     }
 
     trainer_class = supported_trainer[cfg.model_type]
@@ -75,7 +77,7 @@ def main():
         help="Checkpoint for resume training or finetuning.",
     )
 
-    VALLETrainer.add_arguments(parser)
+    # VALLETrainer.add_arguments(parser)
     args = parser.parse_args()
     cfg = load_config(args.config)
 

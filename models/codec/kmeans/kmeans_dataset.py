@@ -13,6 +13,7 @@ import librosa
 import numpy as np
 from transformers import SeamlessM4TFeatureExtractor
 
+
 class KMeansDataset(torch.utils.data.Dataset):
     def __init__(self, cfg, dataset, is_valid=False):
         assert isinstance(dataset, str)
@@ -46,7 +47,9 @@ class KMeansDataset(torch.utils.data.Dataset):
             )
         )
 
-        self.processor = SeamlessM4TFeatureExtractor.from_pretrained("facebook/w2v-bert-2.0")
+        self.processor = SeamlessM4TFeatureExtractor.from_pretrained(
+            "facebook/w2v-bert-2.0"
+        )
 
     def __len__(self):
         return len(self.metadata)
@@ -66,7 +69,7 @@ class KMeansDataset(torch.utils.data.Dataset):
 
         # load speech
         speech = librosa.load(utt_info["path"], sr=self.cfg.preprocess.sample_rate)[0]
-        inputs = self.processor(speech, sampll_rate=16000)
+        inputs = self.processor(speech, sampling_rate=16000)
         input_features = inputs["input_features"][0]
         attention_mask = inputs["attention_mask"][0]
 
@@ -107,6 +110,7 @@ class KMeansCollator(object):
                 pass
 
         return packed_batch_features
+
 
 # if __name__ == "__main__":
 #     processor = SeamlessM4TFeatureExtractor.from_pretrained("facebook/w2v-bert-2.0")
