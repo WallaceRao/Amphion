@@ -214,6 +214,29 @@ class KMeansEMA(nn.Module):
 
         return quantize, codebook_loss, perp
 
+    def quantize(self, x):
+        shape, dtype = x.shape, x.dtype
+        flatten = rearrange(x, "... d -> (...) d")
+        embed = self.embed.t()
+
+        if not self.initted:
+            if flatten.shape[0] >= self.codebook_size * 2:
+                self.init_embed_(flatten[: self.codebook_size * 2, :])
+            else:
+                self.init_embed_(flatten)
+
+        dist = -(
+            flatten.pow(2).sum(1, keepdim=True)
+            - 2 * flatten @ embed
+            + embed.pow(2).sum(0, keepdim=True)
+        )
+
+        embed_ind = dist.max(dim=-1).indices
+        embed_onehot = F.one_hot(embed_ind, self.codebook_size).type(dtype)
+        embed_ind = embed_ind.view(*shape[:-1])
+        quantize = F.embedding(embed_ind, self.embed)
+
+        return embed_ind, quantize
 
 if __name__ == "__main__":
     model = KMeans()

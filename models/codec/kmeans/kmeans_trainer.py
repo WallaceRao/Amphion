@@ -275,6 +275,7 @@ class KMeansTrainer(TTSTrainer):
         self.semantic_std = torch.sqrt(stat_mean_var["var"])
         self.semantic_mean = self.semantic_mean.to(self.accelerator.device)
         self.semantic_std = self.semantic_std.to(self.accelerator.device)
+        print("semantic mean: ", self.semantic_mean, "semantic std: ", self.semantic_std)
 
     def _build_dataset(self):
 
@@ -420,11 +421,13 @@ class KMeansTrainer(TTSTrainer):
                 codebook_loss_for_log * valid_mask[:, :, None]
             ).sum() / valid_mask.sum()
             train_losses["codebook_loss"] = codebook_loss_for_log
+            self.current_loss = codebook_loss_for_log.item()
             del codebook_loss_for_log
         else:
             codebook_loss = (
                 codebook_loss * valid_mask[:, :, None]
             ).sum() / valid_mask.sum()
+            self.current_loss = codebook_loss.item()
             train_losses["codebook_loss"] = codebook_loss
 
         total_loss += codebook_loss
@@ -551,11 +554,11 @@ class KMeansTrainer(TTSTrainer):
             with self.accelerator.accumulate(self.model):
                 total_loss, train_losses, training_stats = self._train_step(batch)
             self.batch_count += 1
-            # ema_loss = (
-            #     0.98 * ema_loss + 0.02 * self.current_loss
-            #     if ema_loss is not None
-            #     else self.current_loss
-            # )
+            ema_loss = (
+                0.98 * ema_loss + 0.02 * self.current_loss
+                if ema_loss is not None
+                else self.current_loss
+            )
             # Update info for each step
             # TODO: step means BP counts or batch counts?
             if self.batch_count % self.cfg.train.gradient_accumulation_step == 0:
@@ -570,15 +573,23 @@ class KMeansTrainer(TTSTrainer):
                             step=self.step,
                         )
 
+                if (
+                    self.accelerator.is_main_process
+                    and self.batch_count
+                    % (10 * self.cfg.train.gradient_accumulation_step)
+                    == 0
+                ):
+                    self.echo_log(train_losses, mode="Training")
+
                 self.step += 1
                 epoch_step += 1
 
                 if self.step % self.cfg.train.save_checkpoints_steps == 0:
                     self.save_checkpoint()
 
-                # if self.accelerator.is_main_process:
-                #     if self.step % 100 == 0:
-                #         print(f"EMA Loss: {ema_loss:.6f}")
+                if self.accelerator.is_main_process:
+                    if self.step % 100 == 0:
+                        print(f"EMA Loss: {ema_loss:.6f}")
 
         self.accelerator.wait_for_everyone()
 
@@ -679,3 +690,22 @@ class KMeansTrainer(TTSTrainer):
                 )
             )
         self.accelerator.end_training()
+
+    def echo_log(self, losses, mode="Training"):
+        message = [
+            "{} - Epoch {} Step {}: [{:.3f} s/step]".format(
+                mode, self.epoch + 1, self.step, self.time_window.average
+            )
+        ]
+
+        for key in sorted(losses.keys()):
+            if isinstance(losses[key], dict):
+                for k, v in losses[key].items():
+                    message.append(
+                        str(k).split("/")[-1] + "=" + str(round(float(v), 5))
+                    )
+            else:
+                message.append(
+                    str(key).split("/")[-1] + "=" + str(round(float(losses[key]), 5))
+                )
+        self.logger.info(", ".join(message))
