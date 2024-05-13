@@ -18,7 +18,7 @@ from torch.utils.data.sampler import BatchSampler, SequentialSampler
 from torch.optim import Adam, AdamW
 from torch.nn import MSELoss, L1Loss
 import torch.nn.functional as F
-from transformers import get_inverse_sqrt_schedule
+from transformers import get_inverse_sqrt_schedule, get_constant_schedule
 
 import accelerate
 from accelerate.logging import get_logger
@@ -38,9 +38,6 @@ from models.codec.discriminator.hifigan_disriminator import (
 )
 
 from itertools import chain
-
-from schedulers.scheduler import WarmupLR, WarmupInverseSqrtLR
-
 
 class CodecTrainer(TTSTrainer):
     def __init__(self, args, cfg):
@@ -358,13 +355,20 @@ class CodecTrainer(TTSTrainer):
 
     def _build_scheduler(self):
 
-        scheduler_g = WarmupLR(
-            optimizer=self.optimizer["optimizer_g"],
-            **self.cfg.train.lr_scheduler,
+        # scheduler_g = get_constant_schedule(
+        #     self.optimizer["optimizer_g"]
+        # )
+        # scheduler_d = get_constant_schedule(
+        #     self.optimizer["optimizer_d"]
+        # )
+        # inverse sqrt schedule
+        scheduler_g = get_inverse_sqrt_schedule(
+            self.optimizer["optimizer_g"],
+            num_warmup_steps=self.cfg.train.lr_warmup_steps,
         )
-        scheduler_d = WarmupLR(
-            optimizer=self.optimizer["optimizer_d"],
-            **self.cfg.train.lr_scheduler,
+        scheduler_d = get_inverse_sqrt_schedule(
+            self.optimizer["optimizer_d"],
+            num_warmup_steps=self.cfg.train.lr_warmup_steps,
         )
 
         scheduler = {"scheduler_g": scheduler_g, "scheduler_d": scheduler_d}
@@ -458,6 +462,7 @@ class CodecTrainer(TTSTrainer):
 
         train_losses["batch_size"] = speech.size(0)
         # learning rate
+        print(self.optimizer["optimizer_g"].param_groups[0]["lr"])
         train_losses["learning_rate"] = self.optimizer["optimizer_g"].param_groups[0][
             "lr"
         ]
