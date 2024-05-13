@@ -275,7 +275,9 @@ class KMeansTrainer(TTSTrainer):
         self.semantic_std = torch.sqrt(stat_mean_var["var"])
         self.semantic_mean = self.semantic_mean.to(self.accelerator.device)
         self.semantic_std = self.semantic_std.to(self.accelerator.device)
-        print("semantic mean: ", self.semantic_mean, "semantic std: ", self.semantic_std)
+        print(
+            "semantic mean: ", self.semantic_mean, "semantic std: ", self.semantic_std
+        )
 
     def _build_dataset(self):
 

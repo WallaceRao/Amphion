@@ -238,6 +238,7 @@ class KMeansEMA(nn.Module):
 
         return embed_ind, quantize
 
+
 if __name__ == "__main__":
     model = KMeans()
     x = torch.randn(2, 100, 1024)

@@ -90,9 +90,26 @@ class STFTLoss(torch.nn.Module):
         win_length=600,
         sampling_rate=16000,
         window="hann_window",
+        cfg=None,
     ):
         """Initialize STFT loss module."""
         super(STFTLoss, self).__init__()
+
+        fft_size = (
+            cfg.fft_size if cfg is not None and hasattr(cfg, "fft_size") else fft_size
+        )
+        hop_length = (
+            cfg.hop_length
+            if cfg is not None and hasattr(cfg, "hop_length")
+            else hop_length
+        )
+        win_length = (
+            cfg.win_length
+            if cfg is not None and hasattr(cfg, "win_length")
+            else win_length
+        )
+        window = cfg.window if cfg is not None and hasattr(cfg, "window") else window
+
         self.fft_size = fft_size
         self.hop_length = hop_length
         self.win_length = win_length
@@ -135,6 +152,7 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
         win_lengths=(600, 1200, 240),
         window="hann_window",
         sampling_rate=16000,
+        cfg=None,
     ):
         """Initialize Multi resolution STFT loss module.
         Args:
@@ -144,6 +162,29 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
             window (str): Window function type.
         """
         super(MultiResolutionSTFTLoss, self).__init__()
+
+        fft_sizes = (
+            cfg.fft_sizes
+            if cfg is not None and hasattr(cfg, "fft_sizes")
+            else fft_sizes
+        )
+        hop_sizes = (
+            cfg.hop_sizes
+            if cfg is not None and hasattr(cfg, "hop_sizes")
+            else hop_sizes
+        )
+        win_lengths = (
+            cfg.win_lengths
+            if cfg is not None and hasattr(cfg, "win_lengths")
+            else win_lengths
+        )
+        window = cfg.window if cfg is not None and hasattr(cfg, "window") else window
+        sampling_rate = (
+            cfg.sampling_rate
+            if cfg is not None and hasattr(cfg, "sampling_rate")
+            else sampling_rate
+        )
+
         assert len(fft_sizes) == len(hop_sizes) == len(win_lengths)
         self.stft_losses = torch.nn.ModuleList()
         for fs, ss, wl in zip(fft_sizes, hop_sizes, win_lengths):
@@ -211,8 +252,44 @@ class MultiResolutionMelSpectrogramLoss(nn.Module):
         pow: float = 1.0,
         mel_fmin: List[float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         mel_fmax: List[float] = [None, None, None, None, None, None, None],
+        cfg=None,
     ):
         super().__init__()
+
+        sample_rate = (
+            cfg.sample_rate
+            if cfg is not None and hasattr(cfg, "sample_rate")
+            else sample_rate
+        )
+        n_mels = cfg.n_mels if cfg is not None and hasattr(cfg, "n_mels") else n_mels
+        window_lengths = (
+            cfg.window_lengths
+            if cfg is not None and hasattr(cfg, "window_lengths")
+            else window_lengths
+        )
+        clamp_eps = (
+            cfg.clamp_eps
+            if cfg is not None and hasattr(cfg, "clamp_eps")
+            else clamp_eps
+        )
+        mag_weight = (
+            cfg.mag_weight
+            if cfg is not None and hasattr(cfg, "mag_weight")
+            else mag_weight
+        )
+        log_weight = (
+            cfg.log_weight
+            if cfg is not None and hasattr(cfg, "log_weight")
+            else log_weight
+        )
+        pow = cfg.pow if cfg is not None and hasattr(cfg, "pow") else pow
+        mel_fmin = (
+            cfg.mel_fmin if cfg is not None and hasattr(cfg, "mel_fmin") else mel_fmin
+        )
+        mel_fmax = (
+            cfg.mel_fmax if cfg is not None and hasattr(cfg, "mel_fmax") else mel_fmax
+        )
+
         self.mel_transforms = nn.ModuleList(
             [
                 MelSpectrogram(
