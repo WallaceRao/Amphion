@@ -30,6 +30,7 @@ from torch.optim import Adam, AdamW
 from torch.nn import MSELoss, L1Loss
 import torch.nn.functional as F
 from transformers import get_inverse_sqrt_schedule
+from schedulers.scheduler import WarmupLR, WarmupInverseSqrtLR
 
 import accelerate
 from accelerate.logging import get_logger
@@ -365,9 +366,13 @@ class NS2Trainer(TTSTrainer):
         return optimizer
 
     def _build_scheduler(self):
-        lr_scheduler = get_inverse_sqrt_schedule(
+        # lr_scheduler = get_inverse_sqrt_schedule(
+        #     optimizer=self.optimizer,
+        #     num_warmup_steps=self.cfg.train.lr_warmup_steps,  # TODO: need to check wheather need to multiply by num_processes
+        # )
+        lr_scheduler = WarmupInverseSqrtLR(
             optimizer=self.optimizer,
-            num_warmup_steps=self.cfg.train.lr_warmup_steps,  # TODO: need to check wheather need to multiply by num_processes
+            warmup_step=self.cfg.train.lr_warmup_steps,
         )
         return lr_scheduler
 

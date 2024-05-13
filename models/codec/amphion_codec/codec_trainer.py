@@ -39,6 +39,8 @@ from models.codec.discriminator.hifigan_disriminator import (
 
 from itertools import chain
 
+from schedulers.scheduler import WarmupLR, WarmupInverseSqrtLR
+
 
 class CodecTrainer(TTSTrainer):
     def __init__(self, args, cfg):
@@ -202,7 +204,9 @@ class CodecTrainer(TTSTrainer):
             if self.accelerator.is_main_process:
                 self.logger.info("Building criterion...")
             start = time.monotonic_ns()
-            self.criterion = self._build_criterion()
+            self.criteria = self._build_criterion()
+            for key in self.criteria.keys():
+                self.criteria[key] = self.criteria[key].to(self.accelerator.device)
             end = time.monotonic_ns()
             if self.accelerator.is_main_process:
                 self.logger.info(
@@ -264,10 +268,10 @@ class CodecTrainer(TTSTrainer):
             self.accelerator.init_trackers(self.args.exp_name)
 
     def _build_model(self):
-        encoder = CodecEncoder(self.cfg.model.encoder)
-        decoder = CodecDecoder(self.cfg.model.decoder)
-        period_gan = HiFiGANMultiPeriodDiscriminator(self.cfg.model.period_gan)
-        spec_gan = SpecDiscriminator(self.cfg.model.spec_gan)
+        encoder = CodecEncoder(cfg=self.cfg.model.encoder)
+        decoder = CodecDecoder(cfg=self.cfg.model.decoder)
+        period_gan = HiFiGANMultiPeriodDiscriminator(cfg=self.cfg.model.period_gan)
+        spec_gan = SpecDiscriminator(cfg=self.cfg.model.spec_gan)
         return {
             "encoder": encoder,
             "decoder": decoder,
@@ -320,7 +324,6 @@ class CodecTrainer(TTSTrainer):
             print("Use Normal Batchsize......")
             Dataset, Collator = self._build_dataset()
             train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
-            train_dataset = Dataset(is_valid=False)
             train_collate = Collator(self.cfg)
 
             train_loader = DataLoader(
@@ -341,34 +344,38 @@ class CodecTrainer(TTSTrainer):
         params_g = self.model["encoder"].parameters()
         params_g = chain(params_g, self.model["decoder"].parameters())
         optimizer_g = torch.optim.Adam(
-            filter(lambda p: p.requires_grad, params_g),
+            params_g,
             **self.cfg.train.adam_g,
         )
         params_d = self.model["period_gan"].parameters()
         params_d = chain(params_d, self.model["spec_gan"].parameters())
         optimizer_d = torch.optim.Adam(
-            filter(lambda p: p.requires_grad, params_d),
+            params_d,
             **self.cfg.train.adam_d,
         )
         optimizer = {"optimizer_g": optimizer_g, "optimizer_d": optimizer_d}
         return optimizer
 
     def _build_scheduler(self):
-        scheduler_g = get_inverse_sqrt_schedule(
+
+        scheduler_g = WarmupLR(
             optimizer=self.optimizer["optimizer_g"],
-            num_warmup_steps=self.cfg.train.lr_warmup_steps,
+            **self.cfg.train.lr_scheduler,
         )
-        scheduler_d = get_inverse_sqrt_schedule(
+        scheduler_d = WarmupLR(
             optimizer=self.optimizer["optimizer_d"],
-            num_warmup_steps=self.cfg.train.lr_warmup_steps,
+            **self.cfg.train.lr_scheduler,
         )
+
         scheduler = {"scheduler_g": scheduler_g, "scheduler_d": scheduler_d}
         return scheduler
 
     def _build_criterion(self):
         criteria = dict()
-        criteria["gan_loss"] = GANLoss(model="lsgan")
-        criteria["mel_loss"] = MultiResolutionMelSpectrogramLoss(self.cfg.loss.mel_loss)
+        criteria["gan_loss"] = GANLoss(mode="lsgan")
+        criteria["mel_loss"] = MultiResolutionMelSpectrogramLoss(
+            cfg=self.cfg.loss.mel_loss
+        )
         criteria["fm_loss"] = torch.nn.L1Loss()
         return criteria
 
@@ -419,7 +426,7 @@ class CodecTrainer(TTSTrainer):
 
         vq_emb = self.model["encoder"](speech.unsqueeze(1))
         vq_post_emb, _, commit_losses, codebook_losses, _ = self.model["decoder"](
-            vq_emb, vq=True, eval=False
+            vq_emb, vq=True, eval_vq=False
         )
         vq_loss = commit_losses + codebook_losses
         y_ = self.model["decoder"](vq_post_emb, vq=False)
@@ -443,6 +450,8 @@ class CodecTrainer(TTSTrainer):
         self.scheduler["scheduler_g"].step()
 
         total_loss += gen_loss
+
+        self.current_loss = total_loss.item()
 
         for item in train_losses:
             train_losses[item] = train_losses[item].item()

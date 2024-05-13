@@ -13,6 +13,7 @@ import torch
 # from models.tts.naturalspeech2.ns2_trainer import NS2Trainer
 from models.tts.gpt_tts.gpt_tts_trainer import NS2Trainer as GPTTTSTrainer
 from models.codec.kmeans.kmeans_trainer import KMeansTrainer
+from models.codec.amphion_codec.codec_trainer import CodecTrainer
 from utils.util import load_config
 
 
@@ -24,6 +25,7 @@ def build_trainer(args, cfg):
         # "NaturalSpeech2": NS2Trainer,
         "GPTTTS": GPTTTSTrainer,
         "KMeans": KMeansTrainer,
+        "Codec": CodecTrainer,
     }
 
     trainer_class = supported_trainer[cfg.model_type]

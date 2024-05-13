@@ -1,6 +1,6 @@
 {
     // "base_config": "config/tts.json",
-    "model_type": "KMeans",
+    "model_type": "Codec",
     "dataset": ["libritts-train-clean-100"],
     "preprocess": {
         "hop_size": 480,
@@ -51,9 +51,9 @@
         },
         "spec_gan": {
             "stft_params": {
-                "fft_size": [128, 256, 512, 1024, 2048],
-                "hop_size": [32, 64, 128, 256, 512],
-                "win_length": [128, 256, 512, 1024, 2048],
+                "fft_sizes": [128, 256, 512, 1024, 2048],
+                "hop_sizes": [32, 64, 128, 256, 512],
+                "win_lengths": [128, 256, 512, 1024, 2048],
                 "window": "hann_window"
             },
             "in_channels": 1,
@@ -74,7 +74,7 @@
         "mel_loss_weight": 10.0,
         "adv_loss_weight": 2.0,
         "fm_loss_weight": 2.0,
-        "spec_loss_weight": 1.0,
+        "spec_fm_loss_weight": 1.0,
         "vq_loss_weight": 1.0
     },
     "log_dir": "/blob/v-yuancwang/codec_ckpt/codec_amphion",
@@ -84,19 +84,23 @@
         "max_tokens": 16000000,
         "max_sentences": 200,
         "lr_warmup_steps": 10000,
-        "lr_scheduler": "inverse_sqrt",
+        "lr_scheduler": {
+            "warmup_step": 10000,
+            "min_lr": 1e-4,
+            "max_lr": 2e-4
+        },
         "num_train_steps": 100000,
         "adam_g": {
-            "lr": 1e-4,
+            "lr": 2e-4,
             "betas": [0.5, 0.9]
         },
         "adam_d": {
-            "lr": 1e-4,
+            "lr": 2e-4,
             "betas": [0.5, 0.9]
         },
         "ddp": false,
         "random_seed": 114,
-        "batch_size": 64,   // use batch_size if not use dynamic batchsize
+        "batch_size": 24,   // use batch_size if not use dynamic batchsize
         "epochs": 5000,
         "max_steps": 1000000,
         "total_training_steps": 800000,

@@ -36,6 +36,8 @@ from einops import rearrange
 
 from transformers import Wav2Vec2BertModel
 
+from schedulers.scheduler import WarmupLR, WarmupInverseSqrtLR
+
 
 class KMeansTrainer(TTSTrainer):
     def __init__(self, args, cfg):
@@ -350,9 +352,13 @@ class KMeansTrainer(TTSTrainer):
         return optimizer
 
     def _build_scheduler(self):
-        lr_scheduler = get_inverse_sqrt_schedule(
+        # lr_scheduler = get_inverse_sqrt_schedule(
+        #     optimizer=self.optimizer,
+        #     num_warmup_steps=self.cfg.train.lr_warmup_steps,  # TODO: need to check wheather need to multiply by num_processes
+        # )
+        lr_scheduler = WarmupLR(
             optimizer=self.optimizer,
-            num_warmup_steps=self.cfg.train.lr_warmup_steps,  # TODO: need to check wheather need to multiply by num_processes
+            **self.cfg.train.lr_scheduler,
         )
         return lr_scheduler
 
