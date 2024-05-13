@@ -36,6 +36,7 @@ from einops import rearrange
 
 from transformers import Wav2Vec2BertModel
 
+
 class KMeansTrainer(TTSTrainer):
     def __init__(self, args, cfg):
         self.args = args
@@ -349,9 +350,14 @@ class KMeansTrainer(TTSTrainer):
         return optimizer
 
     def _build_scheduler(self):
-        lr_scheduler = get_inverse_sqrt_schedule(
+        # lr_scheduler = get_inverse_sqrt_schedule(
+        #     optimizer=self.optimizer,
+        #     num_warmup_steps=self.cfg.train.lr_warmup_steps,  # TODO: need to check wheather need to multiply by num_processes
+        # )
+        # constant lr_scheduler
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
             optimizer=self.optimizer,
-            num_warmup_steps=self.cfg.train.lr_warmup_steps,  # TODO: need to check wheather need to multiply by num_processes
+            lr_lambda=lambda x: 1.0,
         )
         return lr_scheduler
 

@@ -39,6 +39,7 @@ from models.codec.discriminator.hifigan_disriminator import (
 
 from itertools import chain
 
+
 class CodecTrainer(TTSTrainer):
     def __init__(self, args, cfg):
         self.args = args
@@ -355,21 +356,21 @@ class CodecTrainer(TTSTrainer):
 
     def _build_scheduler(self):
 
-        # scheduler_g = get_constant_schedule(
-        #     self.optimizer["optimizer_g"]
-        # )
-        # scheduler_d = get_constant_schedule(
-        #     self.optimizer["optimizer_d"]
-        # )
+        scheduler_g = get_constant_schedule(
+            self.optimizer["optimizer_g"]
+        )
+        scheduler_d = get_constant_schedule(
+            self.optimizer["optimizer_d"]
+        )
         # inverse sqrt schedule
-        scheduler_g = get_inverse_sqrt_schedule(
-            self.optimizer["optimizer_g"],
-            num_warmup_steps=self.cfg.train.lr_warmup_steps,
-        )
-        scheduler_d = get_inverse_sqrt_schedule(
-            self.optimizer["optimizer_d"],
-            num_warmup_steps=self.cfg.train.lr_warmup_steps,
-        )
+        # scheduler_g = get_inverse_sqrt_schedule(
+        #     self.optimizer["optimizer_g"],
+        #     num_warmup_steps=self.cfg.train.lr_warmup_steps,
+        # )
+        # scheduler_d = get_inverse_sqrt_schedule(
+        #     self.optimizer["optimizer_d"],
+        #     num_warmup_steps=self.cfg.train.lr_warmup_steps,
+        # )
 
         scheduler = {"scheduler_g": scheduler_g, "scheduler_d": scheduler_d}
         return scheduler
