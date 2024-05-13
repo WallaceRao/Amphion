@@ -463,7 +463,6 @@ class CodecTrainer(TTSTrainer):
 
         train_losses["batch_size"] = speech.size(0)
         # learning rate
-        print(self.optimizer["optimizer_g"].param_groups[0]["lr"])
         train_losses["learning_rate"] = self.optimizer["optimizer_g"].param_groups[0][
             "lr"
         ]
