@@ -355,13 +355,8 @@ class CodecTrainer(TTSTrainer):
         return optimizer
 
     def _build_scheduler(self):
-
-        scheduler_g = get_constant_schedule(
-            self.optimizer["optimizer_g"]
-        )
-        scheduler_d = get_constant_schedule(
-            self.optimizer["optimizer_d"]
-        )
+        scheduler_g = get_constant_schedule(self.optimizer["optimizer_g"])
+        scheduler_d = get_constant_schedule(self.optimizer["optimizer_d"])
         # inverse sqrt schedule
         # scheduler_g = get_inverse_sqrt_schedule(
         #     self.optimizer["optimizer_g"],
@@ -409,7 +404,6 @@ class CodecTrainer(TTSTrainer):
         return state_dict
 
     def load_model(self, checkpoint):
-
         self.step = checkpoint["step"]
         self.epoch = checkpoint["epoch"]
 
@@ -470,7 +464,6 @@ class CodecTrainer(TTSTrainer):
         return total_loss, train_losses, train_stats
 
     def _train_disc_step(self, y, y_, train_losses):
-
         # period discriminator
         p = self.model["period_gan"](y)
         p_ = self.model["period_gan"](y_.detach())
@@ -509,7 +502,6 @@ class CodecTrainer(TTSTrainer):
         return disc_loss, train_losses
 
     def _train_gen_step(self, y, y_, vq_loss, train_losses):
-
         gen_loss = 0.0
 
         # set discriminator to eval mode

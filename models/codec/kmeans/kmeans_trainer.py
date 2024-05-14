@@ -280,7 +280,6 @@ class KMeansTrainer(TTSTrainer):
         )
 
     def _build_dataset(self):
-
         return KMeansDataset, KMeansCollator
 
     def _build_dataloader(self):
