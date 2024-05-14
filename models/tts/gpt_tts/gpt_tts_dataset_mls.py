@@ -378,9 +378,13 @@ class VALLEDataset(Dataset):
             noise = noise[0 : len(clean)]  # 截取噪声的长度
         else:
             while len(noise) <= len(clean):  # 如果噪声的长度小于语音的长度
-                random_idx = (random_idx + 1) % len(self.noise_filenames)  # 随机读一个噪声
+                random_idx = (random_idx + 1) % len(
+                    self.noise_filenames
+                )  # 随机读一个噪声
                 newnoise, fs = librosa.load(selected_noise_file, sr=SAMPLE_RATE)
-                noiseconcat = np.append(noise, np.zeros(int(fs * 0.2)))  # 在噪声后面加上0.2静音
+                noiseconcat = np.append(
+                    noise, np.zeros(int(fs * 0.2))
+                )  # 在噪声后面加上0.2静音
                 noise = np.append(noiseconcat, newnoise)  # 拼接噪声
         noise = noise[0 : len(clean)]  # 截取噪声的长度
         # 随机sample一个小于20大于0的随机数

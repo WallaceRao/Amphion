@@ -107,7 +107,7 @@
         "gradient_accumulation_step": 1,
         "tracker": ["tensorboard"],
         "save_checkpoint_stride": [1],
-        "keep_last": [1],
+        "keep_last": [10],
         "run_eval": [true],
         "dataloader": {
           "num_worker": 4,
