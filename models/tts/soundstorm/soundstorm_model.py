@@ -36,10 +36,65 @@ class SoundStorm(nn.Module):
         num_heads=16,
         codebook_size=1024,
         cfg_scale=0.15,
-        mask_layer_schedule="cosine",  # "uniform", "cosine", "linear
+        mask_layer_schedule="linear",  # "uniform", "cosine", "linear
+        use_cond_code=True,
+        cond_codebook_size=1024,
+        cond_dim=1024,  # if use_cond_code is False, cond_dim is the dimension of the condition
         cfg=None,
     ):
         super().__init__()
+
+        num_quantizer = (
+            cfg.num_quantizer
+            if cfg.num_quantizer is not None and hasattr(cfg, "num_quantizer")
+            else num_quantizer
+        )
+        hidden_size = (
+            cfg.hidden_size
+            if cfg.hidden_size is not None and hasattr(cfg, "hidden_size")
+            else hidden_size
+        )
+        num_layers = (
+            cfg.num_layers
+            if cfg.num_layers is not None and hasattr(cfg, "num_layers")
+            else num_layers
+        )
+        num_heads = (
+            cfg.num_heads
+            if cfg.num_heads is not None and hasattr(cfg, "num_heads")
+            else num_heads
+        )
+        codebook_size = (
+            cfg.codebook_size
+            if cfg.codebook_size is not None and hasattr(cfg, "codebook_size")
+            else codebook_size
+        )
+        cfg_scale = (
+            cfg.cfg_scale
+            if cfg.cfg_scale is not None and hasattr(cfg, "cfg_scale")
+            else cfg_scale
+        )
+        mask_layer_schedule = (
+            cfg.mask_layer_schedule
+            if cfg.mask_layer_schedule is not None
+            and hasattr(cfg, "mask_layer_schedule")
+            else mask_layer_schedule
+        )
+        use_cond_code = (
+            cfg.use_cond_code
+            if cfg.use_cond_code is not None and hasattr(cfg, "use_cond_code")
+            else use_cond_code
+        )
+        cond_codebook_size = (
+            cfg.cond_codebook_size
+            if cfg.cond_codebook_size is not None and hasattr(cfg, "cond_codebook_size")
+            else cond_codebook_size
+        )
+        cond_dim = (
+            cfg.cond_dim
+            if cfg.cond_dim is not None and hasattr(cfg, "cond_dim")
+            else cond_dim
+        )
 
         self.num_quantizer = num_quantizer
         self.hidden_size = hidden_size
@@ -48,6 +103,9 @@ class SoundStorm(nn.Module):
         self.num_heads = num_heads
         self.cfg_scale = cfg_scale
         self.mask_layer_schedule = mask_layer_schedule
+        self.use_cond_code = use_cond_code
+        self.cond_codebook_size = cond_codebook_size
+        self.cond_dim = cond_dim
 
         # conformer backbone settings
         self.diff_estimator = DiffTransformer(
@@ -75,6 +133,15 @@ class SoundStorm(nn.Module):
                 for _ in range(self.num_quantizer)
             ]
         )
+
+        if self.use_cond_code:
+            self.cond_emb = nn.Embedding(cond_codebook_size, self.hidden_size)
+        else:
+            self.cond_mlp = nn.Sequential(
+                nn.Linear(cond_dim, self.hidden_size * 4),
+                nn.SiLU(),
+                nn.Linear(self.hidden_size * 4, self.hidden_size),
+            )
 
         self.reset_parameters()
 
@@ -178,8 +245,8 @@ class SoundStorm(nn.Module):
         # prompt_len: (B,)
         # mask_prob: (B,)
 
-        if cond is None:
-            cond = torch.zeros_like(xt).to(xt.device)  # (B, T, hidden_size)
+        # if cond is None:
+        #     cond = torch.zeros_like(xt).to(xt.device)  # (B, T, hidden_size)
         mask_layer_cond = self.layer_emb(mask_layer).unsqueeze(1)  # (1, 1, hidden_size)
         cond = cond + mask_layer_cond  # (B, T, hidden_size)
 
@@ -237,17 +304,180 @@ class SoundStorm(nn.Module):
 
         self.apply(_reset_parameters)
 
+    @torch.no_grad()
+    def reverse_diffusion(
+        self,
+        cond,
+        prompt,
+        x_mask=None,
+        prompt_mask=None,
+        temp=1.5,
+        filter_thres=0.98,
+        max_layer=None,
+        gt_code=None,
+        n_timesteps=[10, 4, 4, 4, 4, 4, 4, 4],
+        cfg=1.0,
+        rescale_cfg=1.0,
+    ):
+
+        assert (
+            len(n_timesteps) == self.num_quantizer
+        )  # each layer has a number of steps
+
+        prompt_code = prompt  # (B, prompt_len, num_quantizer)
+        prompt_len = prompt_code.shape[1]
+        target_len = cond.shape[1] - prompt_len
+
+        if x_mask == None:
+            x_mask = torch.ones(cond.shape[0], target_len).to(cond.device)  # (B, T)
+        if prompt_mask == None:
+            prompt_mask = torch.ones(cond.shape[0], prompt_len).to(
+                cond.device
+            )  # (B, prompt_len)
+
+        cum = torch.zeros(x_mask.shape[0], x_mask.shape[1], self.hidden_size).to(
+            x_mask.device
+        )  # (B, T, hidden_size)
+
+        bsz, seq_len, _ = cum.shape
+
+        choice_temp = 1.0
+        start_temp = temp  # temperature for sampling
+        start_choice_temp = choice_temp  # temperature for choicing mask tokens
+
+        if max_layer is None:
+            max_layer = self.num_quantizer
+
+        xt = torch.LongTensor(bsz, seq_len, max_layer).to(x_mask.device)
+
+        if gt_code is not None:
+            gt_layer = gt_code.shape[-1]
+            xt[:, :, :gt_layer] = gt_code
+            for i in range(gt_layer):
+                cum += self.token_emb[i](xt[:, :, i])
+        else:
+            gt_layer = 0
+
+        for mask_layer in range(gt_layer, max_layer):
+            steps = n_timesteps[mask_layer]
+            to_logits = self.to_logits[mask_layer]
+            token_emb = self.token_emb[mask_layer]
+            mask_layer = torch.tensor(mask_layer).to(x_mask.device).long().unsqueeze(0)
+            mask_layer_cond = self.layer_emb(mask_layer).unsqueeze(
+                1
+            )  # (1,) -> (1, 1, hidden_size)
+            temp_cond = cond + mask_layer_cond  # (B, T, hidden_size)
+
+            mask_token = self.mask_emb(torch.zeros_like(mask_layer))  # (1, hidden_size)
+            mask = torch.full((bsz, seq_len, 1), True).to(x_mask.device)  # (B, T, 1)
+            seq = torch.full((bsz, seq_len), 0).to(x_mask.device)
+
+            h = 1.0 / steps
+
+            # prompt_code: (B, prompt_len, num_quantizer)
+            cur_prompt = 0
+            for idx, emb in enumerate(self.token_emb):
+                cur_prompt = cur_prompt + emb(
+                    prompt_code[:, :, idx]
+                )  # (B, prompt_len, hidden_size)
+
+            t_list = [1.0 - i * h for i in range(steps)]
+            t_list.append(0.0)
+            for i in range(steps):
+                t = t_list[i] * torch.ones(bsz).to(x_mask.device)
+                token = token_emb(seq)  # (B, T, hidden_size)
+                cur = cum + mask * mask_token[:, None, :] + (~mask) * token
+                cur = cur + mask_token[:, None, :] * (max_layer - 1 - mask_layer)
+
+                xt_input = torch.cat([cur_prompt, cur], dim=1)  # (B, T, hidden_size)
+                xt_mask = torch.cat(
+                    [prompt_mask, x_mask], dim=1
+                )  # (B, T), mask is 0 for padding
+
+                embeds = self.diff_estimator(xt_input, t, temp_cond, xt_mask)
+                embeds = embeds[:, prompt_len:, :]
+
+                # cfg
+                mask_embeds = self.diff_estimator(
+                    cur, t, temp_cond[:, prompt_len:, :], x_mask
+                )
+                pos_emb_std = embeds.std()  # std(g_cond)
+                embeds = embeds + cfg * (embeds - mask_embeds)  # g_cfg
+                rescale_embeds = embeds * pos_emb_std / embeds.std()  # g_final
+                embeds = rescale_cfg * rescale_embeds + (1 - rescale_cfg) * embeds
+
+                logits = to_logits(embeds)  # (B, T, codebook_size)
+                annealing_scale = t_list[i]
+
+                choice_temp = start_choice_temp * annealing_scale
+                temp = start_temp * annealing_scale
+                logits = top_k(logits, filter_thres)
+
+                if i == steps - 1:
+                    # greedy
+                    if steps == 1:
+                        temp = 0.2
+                        sampled_ids = gumbel_sample(logits, temperature=max(temp, 1e-3))
+                    else:
+                        sampled_ids = logits.argmax(dim=-1)
+
+                else:
+                    # sampling
+                    sampled_ids = gumbel_sample(logits, temperature=max(temp, 1e-3))
+
+                seq = torch.where(mask.squeeze(-1), sampled_ids, seq)
+
+                scores = logits.softmax(dim=-1)
+                scores = scores.gather(2, rearrange(sampled_ids, "b n -> b n 1"))
+                scores = rearrange(scores, "b n 1 -> b n")
+
+                scores = choice_temp * gumbel_noise(scores) + scores
+                scores = 1 - scores
+
+                next_t = t_list[i + 1] * torch.ones(bsz).to(x_mask.device)
+
+                next_mask_num = (self.mask_prob(next_t) * seq_len).long()[0].item()
+
+                if next_mask_num == 0:
+                    break
+                scores = scores.masked_fill(
+                    ~mask.squeeze(-1), -torch.finfo(scores.dtype).max
+                )
+
+                mask_indices = scores.topk(next_mask_num, dim=-1).indices
+                mask = torch.zeros_like(scores, dtype=torch.bool).scatter(
+                    1, mask_indices, True
+                )
+                seq = seq.masked_fill(mask, 0)
+
+                mask = mask.unsqueeze(-1)
+
+            cum = cum + token_emb(seq)
+            print(seq.shape)
+            print(xt.shape)
+            xt[..., mask_layer.squeeze(0).item()] = seq
+
+        return xt
+
+    def forward(self, x0, x_mask, cond=None, cond_code=None):
+        # x0: (B, T, num_quantizer)
+        # x_mask: (B, T) mask is 0 for padding
+        # cond: semantic token (B, T) or continuous features (B, T, cond_dim)
+        if self.use_cond_code:
+            cond = self.cond_emb(cond_code)
+        else:
+            cond = self.cond_mlp(cond)
+
+        logits, mask_layer, final_mask, x0, prompt_len, mask_prob = self.compute_loss(
+            x0, x_mask, cond
+        )
+        return logits, mask_layer, final_mask, x0, prompt_len, mask_prob
+
 
 # if __name__ == "__main__":
 #     model = SoundStorm()
-#     x0 = torch.randint(0, 1024, (4, 1000, 8))
-#     x_mask = torch.ones(4, 1000)
-#     cond = torch.randn(4, 1000, 1024)
-#     logits, mask_layer, final_mask, x0, prompt_len, mask_prob = model.compute_loss(x0, x_mask, cond)
-#     print(logits.shape)
-#     print(mask_layer)
-#     print(final_mask.shape)
-#     print("prompt_len:", prompt_len)
-#     print("mask tokens:", final_mask.squeeze(2).sum(-1))
-#     print(x0.shape)
-#     print(mask_prob)
+#     x0 = torch.randint(0, 1024, (4, 1200, 8))
+#     x_mask = torch.ones(4, 1200)
+#     cond_code = torch.randint(0, 1024, (4, 1200))
+#     logits, mask_layer, final_mask, x0, prompt_len, mask_prob = model(x0, x_mask, cond_code=cond_code)
+#     print(logits.shape, mask_layer.shape, final_mask.shape, x0.shape, prompt_len.shape, mask_prob.shape)
