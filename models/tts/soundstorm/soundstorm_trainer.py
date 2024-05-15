@@ -145,6 +145,7 @@ class SoundStormTrainer(TTSTrainer):
         self._build_kmeans_model()
 
         # setup acoustic model
+        self._build_acoustic_model()
 
         # optimizer & scheduler
         with self.accelerator.main_process_first():
@@ -293,13 +294,13 @@ class SoundStormTrainer(TTSTrainer):
 
     def _build_acoustic_model(self):
         # codec encoder and codec decoder
-        self.codec_encoder = CodecEncoder(cfg=self.cfg.model.codec_encoder)
-        self.codec_decoder = CodecDecoder(cfg=self.cfg.model.codec_decoder)
+        self.codec_encoder = CodecEncoder(cfg=self.cfg.model.codec.encoder)
+        self.codec_decoder = CodecDecoder(cfg=self.cfg.model.codec.decoder)
         self.codec_encoder.load_state_dict(
-            torch.load(self.cfg.model.codec_encoder.pretrained_path)
+            torch.load(self.cfg.model.codec.encoder.pretrained_path)
         )
         self.codec_decoder.load_state_dict(
-            torch.load(self.cfg.model.codec_decoder.pretrained_path)
+            torch.load(self.cfg.model.codec.decoder.pretrained_path)
         )
         self.codec_decoder = self.codec_decoder.quantizer  # we only need the quantizer
         self.codec_encoder.eval()
@@ -307,16 +308,16 @@ class SoundStormTrainer(TTSTrainer):
         self.codec_encoder.to(self.accelerator.device)
         self.codec_decoder.to(self.accelerator.device)
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def _extract_acoustic_code(self, speech):
-        vq_emb = self.codec_encoder(speech.unsqueeze(0))
+        vq_emb = self.codec_encoder(speech.unsqueeze(1))
         _, vq, _, _, _ = self.codec_decoder(vq_emb)
         acoustic_code = vq.permute(
             1, 2, 0
         )  # (num_quantizer, T, C) -> (T, C, num_quantizer)
         return acoustic_code
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def _extract_semantic_code(self, input_features, attention_mask):
         vq_emb = self.semantic_model(
             input_features=input_features,
@@ -453,12 +454,12 @@ class SoundStormTrainer(TTSTrainer):
             input_features, attention_mask
         )  # (B, T)
         acoustic_code = self._extract_acoustic_code(speech)  # (B, T, num_quantizer)
-        print(
-            "semantic code: ",
-            semantic_code.shape,
-            "acoustic code: ",
-            acoustic_code.shape,
-        )
+        # print(
+        #     "semantic code: ",
+        #     semantic_code.shape,
+        #     "acoustic code: ",
+        #     acoustic_code.shape,
+        # )
 
         seq_len = min(semantic_code.shape[1], acoustic_code.shape[1])
         semantic_code = semantic_code[:, :seq_len]
@@ -468,16 +469,16 @@ class SoundStormTrainer(TTSTrainer):
         logits, mask_layer, final_mask, x0, prompt_len, mask_prob = self.model(
             x0=acoustic_code, x_mask=x_mask, cond=None, cond_code=semantic_code
         )
-        print(
-            "logits: ",
-            logits.shape,
-            "mask_layer: ",
-            mask_layer.shape,
-            "final_mask: ",
-            final_mask.shape,
-            "prompt_len: ",
-            prompt_len.shape,
-        )
+        # print(
+        #     "logits: ",
+        #     logits.shape,
+        #     "mask_layer: ",
+        #     mask_layer.shape,
+        #     "final_mask: ",
+        #     final_mask.shape,
+        #     "prompt_len: ",
+        #     prompt_len.shape,
+        # )
         # logits: (B, T, codebook_size)
         # mask_layer: (1,)
         # final_mask: (B, T, 1)
@@ -495,11 +496,27 @@ class SoundStormTrainer(TTSTrainer):
         ce_loss = ce_loss.sum() / final_mask.sum()
         total_loss += ce_loss
         train_losses["ce_loss"] = ce_loss
-        # caluate accuracy
+        # caluate accuracy top 1
         acc = (logits.argmax(-1) == target).float()
         acc = acc * final_mask
         acc = acc.sum() / final_mask.sum()
+        # caluate accuracy top 5
+        acc5 = torch.topk(logits, 5, dim=-1)[1]
+        acc5 = torch.sum(acc5 == target.unsqueeze(-1), dim=-1).float()
+        acc5 = acc5 * final_mask
+        acc5 = acc5.sum() / final_mask.sum()
+        # caluate accuracy top 10
+        acc10 = torch.topk(logits, 10, dim=-1)[1]
+        acc10 = torch.sum(acc10 == target.unsqueeze(-1), dim=-1).float()
+        acc10 = acc10 * final_mask
+        acc10 = acc10.sum() / final_mask.sum()
+
         train_losses["acc"] = acc
+        train_losses["acc5"] = acc5
+        train_losses["acc10"] = acc10
+
+        train_losses["mask_layer"] = mask_layer
+        train_losses["mask_prob"] = mask_prob
 
         self.optimizer.zero_grad()
         self.accelerator.backward(total_loss)
@@ -512,6 +529,8 @@ class SoundStormTrainer(TTSTrainer):
 
         for item in train_losses:
             train_losses[item] = train_losses[item].item()
+
+        self.current_loss = total_loss.item()
 
         train_losses["batch_size"] = input_features.shape[0]
 

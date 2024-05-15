@@ -41,7 +41,7 @@
                 "up_ratios": [3, 4, 5, 8],
                 "out_channels": 256,
                 "use_tanh": false,
-                "pretrained_path": "/blob/v-yuancwang/codec_ckpt/codec_amphion/codec_dac_vocos_24K_320hopsize_12vq_30vocos_layers/checkpoint/epoch-0014_step-0016000_loss-27.834438/pytorch_model_1.bin"
+                "pretrained_path": "/blob/v-yuancwang/codec_ckpt/codec_amphion/codec_dac_vocos_24K_320hopsize_12vq_30vocos_layers/checkpoint/epoch-0014_step-0016000_loss-27.834438/pytorch_model.bin"
             },
             "decoder": {
                 "in_channel": 256,
@@ -69,7 +69,7 @@
                 "n_fft": 1920,
                 "hop_size": 480,
                 "padding": "same",
-                "pretrained_path": "/blob/v-yuancwang/codec_ckpt/codec_amphion/codec_dac_vocos_24K_320hopsize_12vq_30vocos_layers/checkpoint/epoch-0014_step-0016000_loss-27.834438/pytorch_model_2.bin"
+                "pretrained_path": "/blob/v-yuancwang/codec_ckpt/codec_amphion/codec_dac_vocos_24K_320hopsize_12vq_30vocos_layers/checkpoint/epoch-0014_step-0016000_loss-27.834438/pytorch_model_1.bin"
             }
         }
     },
@@ -77,8 +77,8 @@
     "train": {
         "max_epoch": 0,
         "use_dynamic_batchsize": true,
-        "max_tokens": 800000,   // 800000 = 16000 * 80 which means we use at most 100s speech for a batch
-        "max_sentences": 12,
+        "max_tokens": 1200000,   // 800000 = 16000 * 80 which means we use at most 100s speech for a batch
+        "max_sentences": 16,
         "lr_warmup_steps": 32000,
         "lr_scheduler": "inverse_sqrt",
         "num_train_steps": 800000,
