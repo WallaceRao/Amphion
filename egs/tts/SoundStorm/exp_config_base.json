@@ -11,7 +11,16 @@
     },
     "model": {
         "soundstorm": {
-
+            "num_quantizer": 8,
+            "hidden_size": 1024,
+            "num_layers": 16,
+            "num_heads": 16,
+            "codebook_size": 1024,
+            "cfg_scale": 0.15,
+            "mask_layer_schedule": "linear",
+            "use_cond_code": true,
+            "cond_codebook_size": 1024,
+            "cond_dim":1024
         },
         "kmeans": {
             "type": "kmeans_ema",
@@ -24,14 +33,15 @@
                 "decay": 0.8,
                 "eps": 1e-5
             },
-            "pretrained_path": "/blob/v-yuancwang/codec_ckpt/semantic_kmeans/semantic_kmeans_ema_debug_libritts/checkpoint/epoch-0010_step-0002000_loss-679.313721"
+            "pretrained_path": "/blob/v-yuancwang/codec_ckpt/semantic_kmeans/semantic_kmeans_ema_debug_libritts/checkpoint/epoch-0010_step-0002000_loss-679.313721/pytorch_model.bin"
         },
         "codec": {
             "encoder": {
                 "d_model": 96,
                 "up_ratios": [3, 4, 5, 8],
                 "out_channels": 256,
-                "use_tanh": false
+                "use_tanh": false,
+                "pretrained_path": "/blob/v-yuancwang/codec_ckpt/codec_amphion/codec_dac_vocos_24K_320hopsize_12vq_30vocos_layers/checkpoint/epoch-0014_step-0016000_loss-27.834438/pytorch_model_1.bin"
             },
             "decoder": {
                 "in_channel": 256,
@@ -58,9 +68,9 @@
                 "vocos_num_layers": 30,
                 "n_fft": 1920,
                 "hop_size": 480,
-                "padding": "same"
-            },
-            "pretrained_path": "/blob/v-yuancwang/codec_ckpt/codec_amphion/codec_dac_vocos_24K_320hopsize_12vq_30vocos_layers/checkpoint/epoch-0014_step-0016000_loss-27.834438"
+                "padding": "same",
+                "pretrained_path": "/blob/v-yuancwang/codec_ckpt/codec_amphion/codec_dac_vocos_24K_320hopsize_12vq_30vocos_layers/checkpoint/epoch-0014_step-0016000_loss-27.834438/pytorch_model_2.bin"
+            }
         }
     },
     "log_dir": "/blob/v-yuancwang/codec_ckpt/soundstorm_debug",

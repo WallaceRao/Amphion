@@ -107,7 +107,7 @@ class SoundStormDataset(torch.utils.data.Dataset):
         return utt_info["num_frames"]
 
 
-class KMeansCollator(object):
+class SoundStormCollator(object):
     def __init__(self, cfg):
         self.cfg = cfg
 
