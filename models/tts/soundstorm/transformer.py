@@ -181,7 +181,7 @@ class DiffTransformer(nn.Module):
         # x_mask: (B, T) mask for padding, mask is 0 for padding
 
         # condtion mlp
-        cond = self.cond_mlp(cond)  # (B, C)
+        cond = self.cond_mlp(cond)  # (B, T, C)
 
         # diffusion step embedding
         diffusion_step = self.diff_step_embedding(diffusion_step).to(x.device)
