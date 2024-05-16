@@ -1,27 +1,27 @@
 {
     // "base_config": "config/tts.json",
     "model_type": "Codec",
-    "dataset": ["libritts-train-clean-100"],
+    "dataset": [""],
     "preprocess": {
-        "hop_size": 480,
-        "sample_rate": 24000,
-        "max_length": 36000,
-        "processed_dir": "/home/t-zeqianju/yuancwang/temp_test_dataset",
+        "hop_size": 320,
+        "sample_rate": 16000,
+        "max_length": 24000,
+        "processed_dir": "",
         "valid_file": "valid.json",
         "train_file": "train.json"
     },
     "model": {
         "encoder": {
             "d_model": 96,
-            "up_ratios": [3, 4, 5, 8],
+            "up_ratios": [4, 4, 4, 5],
             "out_channels": 256,
             "use_tanh": false
         },
         "decoder": {
             "in_channel": 256,
             "upsample_initial_channel": 1536,
-            "up_ratios": [8, 5, 4, 3],
-            "num_quantizers": 12,
+            "up_ratios": [5, 4, 4, 4],
+            "num_quantizers": 8,
             "codebook_size": 1024,
             "codebook_dim": 8,
             "quantizer_type": "fvq",
@@ -39,9 +39,9 @@
             "use_vocos": true,
             "vocos_dim": 512,
             "vocos_intermediate_dim": 4096,
-            "vocos_num_layers": 30,
-            "n_fft": 1920,
-            "hop_size": 480,
+            "vocos_num_layers": 24,
+            "n_fft": 1280,
+            "hop_size": 320,
             "padding": "same"
         },
         "period_gan": {
@@ -68,7 +68,7 @@
     },
     "loss": {
         "mel_loss": {
-            "sample_rate": 24000
+            "sample_rate": 16000
         },
         "disc_loss_weight": 1.0,
         "mel_loss_weight": 10.0,
