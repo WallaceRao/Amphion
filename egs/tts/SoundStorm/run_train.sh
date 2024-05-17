@@ -15,8 +15,8 @@ export PYTHONIOENCODING=UTF-8
 ######## Set Experiment Configuration ###########
 # exp_config="$exp_dir/exp_config_base.json"
 # exp_name="soundstorm_24k_12layers_debug"
-exp_config="$exp_dir/exp_config_llama.json"
-exp_name="16k_8layers_debug"
+exp_config="$exp_dir/exp_config_16k.json"
+exp_name="16k_8layers_debug_llama"
 
 ######## Train Model ###########
 CUDA_VISIBLE_DEVICES="0" accelerate launch \

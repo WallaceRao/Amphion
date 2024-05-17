@@ -344,7 +344,7 @@ class DiffLlama(LlamaModel):
                     past_key_value=past_key_value,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
-                    cond_embedding=cond_embedding,  # using cond embed
+                    cond_embedding=diffusion_step,
                 )
 
             hidden_states = layer_outputs[0]
@@ -355,7 +355,7 @@ class DiffLlama(LlamaModel):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
-        hidden_states = self.norm(hidden_states, cond_embedding=cond_embedding)
+        hidden_states = self.norm(hidden_states, cond_embedding=diffusion_step)
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
@@ -373,13 +373,13 @@ class DiffLlama(LlamaModel):
         return hidden_states
 
 
-if __name__ == "__main__":
-    model = DiffLlama()
-    print(model)
-    print(sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6)
-    x = torch.randn(2, 100, 1024)
-    diffusion_step = torch.randint(0, 100, (2,))
-    cond = torch.randn(2, 100, 1024)
-    x_mask = torch.ones(2, 100).bool()
-    out = model(x, diffusion_step, cond, x_mask)
-    print(out.shape)
+# if __name__ == "__main__":
+#     model = DiffLlama()
+#     print(model)
+#     print(sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6)
+#     x = torch.randn(2, 100, 1024)
+#     diffusion_step = torch.randint(0, 100, (2,))
+#     cond = torch.randn(2, 100, 1024)
+#     x_mask = torch.ones(2, 100).bool()
+#     out = model(x, diffusion_step, cond, x_mask)
+#     print(out.shape)

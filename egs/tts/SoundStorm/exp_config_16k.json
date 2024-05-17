@@ -21,7 +21,7 @@
             "use_cond_code": true,
             "cond_codebook_size": 1024,
             "cond_dim":1024,
-            "use_llama_style": false
+            "use_llama_style": true
         },
         "kmeans": {
             "type": "kmeans_ema",
