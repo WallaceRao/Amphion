@@ -84,6 +84,8 @@ class SoundStormDataset(torch.utils.data.Dataset):
             speech_16k = librosa.resample(
                 speech, orig_sr=self.cfg.preprocess.sample_rate, target_sr=16000
             )
+        else:
+            speech_16k = speech
         inputs = self.processor(speech_16k, sampling_rate=16000)
         input_features = inputs["input_features"][0]
         attention_mask = inputs["attention_mask"][0]

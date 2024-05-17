@@ -4,6 +4,7 @@ import torch.nn as nn
 import math
 from einops import rearrange
 from models.tts.soundstorm.transformer import DiffTransformer
+from models.tts.soundstorm.llama_nar import DiffLlama
 
 
 def top_k(logits, thres=0.9):
@@ -40,6 +41,7 @@ class SoundStorm(nn.Module):
         use_cond_code=True,
         cond_codebook_size=1024,
         cond_dim=1024,  # if use_cond_code is False, cond_dim is the dimension of the condition
+        use_llama_style=False,
         cfg=None,
     ):
         super().__init__()
@@ -95,6 +97,11 @@ class SoundStorm(nn.Module):
             if cfg.cond_dim is not None and hasattr(cfg, "cond_dim")
             else cond_dim
         )
+        use_llama_style = (
+            cfg.use_llama_style
+            if cfg.use_llama_style is not None and hasattr(cfg, "use_llama_style")
+            else use_llama_style
+        )
 
         self.num_quantizer = num_quantizer
         self.hidden_size = hidden_size
@@ -106,16 +113,27 @@ class SoundStorm(nn.Module):
         self.use_cond_code = use_cond_code
         self.cond_codebook_size = cond_codebook_size
         self.cond_dim = cond_dim
+        self.use_llama_style = use_llama_style
 
         # conformer backbone settings
-        self.diff_estimator = DiffTransformer(
-            hidden_size=hidden_size,
-            num_heads=16,
-            num_layers=num_layers,
-            dropout=0.1,
-            ffn_dropout=0.1,
-            attention_dropout=0.0,
-        )
+        if not self.use_llama_style:
+            self.diff_estimator = DiffTransformer(
+                hidden_size=hidden_size,
+                num_heads=16,
+                num_layers=num_layers,
+                dropout=0.1,
+                ffn_dropout=0.1,
+                attention_dropout=0.0,
+            )
+        else:
+            self.diff_estimator = DiffLlama(
+                hidden_size=hidden_size,
+                num_heads=16,
+                num_layers=num_layers,
+                dropout=0.1,
+                ffn_dropout=0.1,
+                attention_dropout=0.0,
+            )
 
         self.layer_emb = nn.Embedding(self.num_quantizer, self.hidden_size)
         self.mask_emb = nn.Embedding(1, self.hidden_size)

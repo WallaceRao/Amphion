@@ -123,7 +123,7 @@ class LlamaNARDecoderLayer(LlamaDecoderLayer):
         return outputs
 
 
-class DiffTransformer(LlamaModel):
+class DiffLlama(LlamaModel):
     def __init__(
         self,
         hidden_size=1024,
@@ -251,10 +251,6 @@ class DiffTransformer(LlamaModel):
         inputs_embeds = x
         attention_mask = x_mask
 
-        print("inputs_embeds", inputs_embeds.shape)
-        print("attention_mask", attention_mask.shape)
-        print("cond_embedding", cond_embedding.shape)
-
         output_attentions = (
             output_attentions
             if output_attentions is not None
@@ -377,13 +373,13 @@ class DiffTransformer(LlamaModel):
         return hidden_states
 
 
-# if __name__ == "__main__":
-#     model = DiffTransformer()
-#     print(model)
-#     print(sum(p.numel() for p in model.parameters() if p.requires_grad)/1e6)
-#     x = torch.randn(2, 100, 1024)
-#     diffusion_step = torch.randint(0, 100, (2,))
-#     cond = torch.randn(2, 100, 1024)
-#     x_mask = torch.ones(2, 100).bool()
-#     out = model(x, diffusion_step, cond, x_mask)
-#     print(out.shape)
+if __name__ == "__main__":
+    model = DiffLlama()
+    print(model)
+    print(sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6)
+    x = torch.randn(2, 100, 1024)
+    diffusion_step = torch.randint(0, 100, (2,))
+    cond = torch.randn(2, 100, 1024)
+    x_mask = torch.ones(2, 100).bool()
+    out = model(x, diffusion_step, cond, x_mask)
+    print(out.shape)

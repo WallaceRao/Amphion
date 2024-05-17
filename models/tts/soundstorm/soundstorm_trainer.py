@@ -516,7 +516,7 @@ class SoundStormTrainer(TTSTrainer):
         train_losses["acc10"] = acc10
 
         train_losses["mask_layer"] = mask_layer
-        train_losses["mask_prob"] = mask_prob
+        # train_losses["mask_prob"] = mask_prob
 
         self.optimizer.zero_grad()
         self.accelerator.backward(total_loss)
