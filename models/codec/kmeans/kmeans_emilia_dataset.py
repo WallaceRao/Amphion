@@ -34,7 +34,7 @@ AK = ""
 SK = ""
 bucket_name = "pjlab-3090-openmmlabpartner"
 MOUNT_PATH = "/mnt/data/oss_beijing/"
-data_json_path = "Emila/Emilia-zh+en/Emilia-1k.json.gz"
+data_json_path = "Emilia/Emilia-zh+en/Emilia-1k.json.gz"
 
 
 class KMeansDataset(torch.utils.data.Dataset):
@@ -51,7 +51,7 @@ class KMeansDataset(torch.utils.data.Dataset):
         self.init_client(access_key_id, access_key_secret, bucket_name)
         self.json_paths = []
         self.wav_paths = []
-        self.language_list = ['zh', 'en'] # Data language list
+        self.language_list = ["zh", "en"]  # Data language list
         self.wav_path_index2duration = []
         self.wav_path_index2phonelen = []
         self.index2num_frames = []
@@ -372,7 +372,6 @@ class KMeansDataset(torch.utils.data.Dataset):
             return self.__getitem__(random_index)
 
         meta = self.get_meta_from_wav_path(wav_path)
-        print(meta["language"])
         if file_bytes is not None and meta is not None:
             buffer = io.BytesIO(file_bytes.read())
             speech, sr = librosa.load(buffer, sr=16000)
@@ -400,11 +399,12 @@ class KMeansDataset(torch.utils.data.Dataset):
             del position
             return self.__getitem__(random_index)
 
-if __name__ == "__main__":
 
-    import soundfile as sf
+# if __name__ == "__main__":
 
-    dataset = KMeansDataset(AK, SK, bucket_name)
-    for i in range(555, 74343, 1000):
-        data = dataset[i]
-        sf.write(f"temp/speech_{i}.wav", data["speech"], 16000)
+#     import soundfile as sf
+
+#     dataset = KMeansDataset(AK, SK, bucket_name)
+#     for i in range(555, 74343, 1000):
+#         data = dataset[i]
+#         sf.write(f"temp/speech_{i}.wav", data["speech"], 16000)

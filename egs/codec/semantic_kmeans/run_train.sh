@@ -13,8 +13,8 @@ export PYTHONPATH=$work_dir
 export PYTHONIOENCODING=UTF-8
  
 ######## Set Experiment Configuration ###########
-exp_config="$exp_dir/exp_config_base.json"
-exp_name="semantic_kmeans_ema_debug_libritts"
+exp_config="$exp_dir/exp_config_emilia.json"
+exp_name="semantic_kmeans_ema_debug_emilia_1k"
 
 ######## Train Model ###########
 CUDA_VISIBLE_DEVICES="0" accelerate launch \
