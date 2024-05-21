@@ -284,7 +284,13 @@ class CodecTrainer(TTSTrainer):
         if self.cfg.train.use_dynamic_batchsize:
             print("Use Dynamic Batchsize......")
             Dataset, Collator = self._build_dataset()
-            train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
+            if (
+                hasattr(self.cfg.train, "use_emilia_dataset")
+                and self.cfg.train.use_emilia_dataset
+            ):
+                train_dataset = Dataset()
+            else:
+                train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
             train_collate = Collator(self.cfg)
             batch_sampler = batch_by_size(
                 train_dataset.num_frame_indices,
@@ -321,7 +327,13 @@ class CodecTrainer(TTSTrainer):
         else:
             print("Use Normal Batchsize......")
             Dataset, Collator = self._build_dataset()
-            train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
+            if (
+                hasattr(self.cfg.train, "use_emilia_dataset")
+                and self.cfg.train.use_emilia_dataset
+            ):
+                train_dataset = Dataset()
+            else:
+                train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
             train_collate = Collator(self.cfg)
 
             train_loader = DataLoader(

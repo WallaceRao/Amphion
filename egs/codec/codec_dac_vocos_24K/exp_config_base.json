@@ -112,7 +112,8 @@
         "dataloader": {
           "num_worker": 4,
           "pin_memory": true
-        }
+        },
+        "use_emilia_dataset": true
     }
     // "trans_exp": {
     //     "dataset_list":["mls_train"],

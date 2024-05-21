@@ -14,7 +14,7 @@ export PYTHONIOENCODING=UTF-8
  
 ######## Set Experiment Configuration ###########
 exp_config="$exp_dir/exp_config_base.json"
-exp_name="codec_dac_vocos_24K_320hopsize_12vq_30vocos_layers"
+exp_name="codec_dac_vocos_24K_320hopsize_12vq_30vocos_layers_emilia"
 
 ######## Train Model ###########
 CUDA_VISIBLE_DEVICES="0" accelerate launch \
