@@ -127,23 +127,23 @@ class KMeansEMA(nn.Module):
     ):
         super().__init__()
 
-        self.codebook_size = (
+        codebook_size = (
             cfg.codebook_size
             if cfg is not None and hasattr(cfg, "codebook_size")
             else codebook_size
         )
-        self.codebook_dim = (
+        codebook_dim = (
             cfg.codebook_dim
             if cfg is not None and hasattr(cfg, "codebook_dim")
             else codebook_dim
         )
-        self.kmeans_iters = (
+        kmeans_iters = (
             cfg.kmeans_iters
             if cfg is not None and hasattr(cfg, "kmeans_iters")
             else kmeans_iters
         )
-        self.decay = cfg.decay if cfg is not None and hasattr(cfg, "decay") else decay
-        self.eps = cfg.eps if cfg is not None and hasattr(cfg, "eps") else eps
+        decay = cfg.decay if cfg is not None and hasattr(cfg, "decay") else decay
+        eps = cfg.eps if cfg is not None and hasattr(cfg, "eps") else eps
 
         init_fn = torch.randn if not kmeans_init else torch.zeros
         embed = init_fn(codebook_size, codebook_dim)
@@ -239,14 +239,14 @@ class KMeansEMA(nn.Module):
         return embed_ind, quantize
 
 
-if __name__ == "__main__":
-    model = KMeans()
-    x = torch.randn(2, 100, 1024)
-    quantize, codebook_loss, perp = model(x)
-    print(quantize.shape, codebook_loss.shape, perp)
-    # torch.Size([2, 10, 1024]) torch.Size([2, 10, 1024]) tensor(6.9078)
+# if __name__ == "__main__":
+#     model = KMeans()
+#     x = torch.randn(2, 100, 1024)
+#     quantize, codebook_loss, perp = model(x)
+#     print(quantize.shape, codebook_loss.shape, perp)
+#     # torch.Size([2, 10, 1024]) torch.Size([2, 10, 1024]) tensor(6.9078)
 
-    model = KMeansEMA()
-    x = torch.randn(2, 100, 1024)
-    quantize, codebook_loss, perp = model(x)
-    print(quantize.shape, codebook_loss, perp)
+#     model = KMeansEMA()
+#     x = torch.randn(2, 100, 1024)
+#     quantize, codebook_loss, perp = model(x)
+#     print(quantize.shape, codebook_loss, perp)
