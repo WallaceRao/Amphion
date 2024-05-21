@@ -25,7 +25,6 @@ from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration
 
 from models.codec.amphion_codec.codec import CodecEncoder, CodecDecoder
-from models.codec.amphion_codec.codec_dataset import CodecDataset, CodecCollator
 from models.tts.gpt_tts.gpt_tts_dataset import batch_by_size
 from models.codec.amphion_codec.loss import (
     MultiResolutionSTFTLoss,
@@ -278,6 +277,15 @@ class CodecTrainer(TTSTrainer):
         }
 
     def _build_dataset(self):
+        from models.codec.amphion_codec.codec_dataset import CodecCollator
+
+        if (
+            hasattr(self.cfg.train, "use_emilia_dataset")
+            and self.cfg.train.use_emilia_dataset
+        ):
+            from models.codec.amphion_codec.codec_emilia_dataset import CodecDataset
+        else:
+            from models.codec.amphion_codec.codec_dataset import CodecDataset
         return CodecDataset, CodecCollator
 
     def _build_dataloader(self):
@@ -288,7 +296,7 @@ class CodecTrainer(TTSTrainer):
                 hasattr(self.cfg.train, "use_emilia_dataset")
                 and self.cfg.train.use_emilia_dataset
             ):
-                train_dataset = Dataset()
+                train_dataset = Dataset(cfg=self.cfg)
             else:
                 train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
             train_collate = Collator(self.cfg)
@@ -331,7 +339,7 @@ class CodecTrainer(TTSTrainer):
                 hasattr(self.cfg.train, "use_emilia_dataset")
                 and self.cfg.train.use_emilia_dataset
             ):
-                train_dataset = Dataset()
+                train_dataset = Dataset(cfg=self.cfg)
             else:
                 train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
             train_collate = Collator(self.cfg)

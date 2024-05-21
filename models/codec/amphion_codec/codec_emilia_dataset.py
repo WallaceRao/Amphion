@@ -48,9 +48,10 @@ class CodecDataset(torch.utils.data.Dataset):
         access_key_secret=SK,
         bucket_name=bucket_name,
         cache_type="path",
+        cfg=None
     ):  # 'path' or 'meta'
         self.cache_type = cache_type
-
+        self.cfg = cfg
         # Initialize OSS client
         self.init_client(access_key_id, access_key_secret, bucket_name)
         self.json_paths = []
