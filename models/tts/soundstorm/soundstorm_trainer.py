@@ -35,6 +35,8 @@ from models.tts.soundstorm.soundstorm_model import SoundStorm
 from models.codec.amphion_codec.codec import CodecEncoder, CodecDecoder
 from transformers import Wav2Vec2BertModel
 
+import safetensors
+
 
 class SoundStormTrainer(TTSTrainer):
     def __init__(self, args, cfg):
@@ -270,7 +272,10 @@ class SoundStormTrainer(TTSTrainer):
             kmeans_model = KMeansEMA(cfg=self.cfg.model.kmeans.kmeans)
         kmeans_model.eval()
         pretrained_path = self.cfg.model.kmeans.pretrained_path
-        kmeans_model.load_state_dict(torch.load(pretrained_path))
+        if ".bin" in pretrained_path:
+            kmeans_model.load_state_dict(torch.load(pretrained_path))
+        elif ".safetensors" in pretrained_path:
+            safetensors.torch.load_model(kmeans_model, pretrained_path)
         kmeans_model.to(self.accelerator.device)
         self.kmeans_model = kmeans_model
 
