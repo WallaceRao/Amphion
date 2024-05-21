@@ -21,16 +21,19 @@ class KMeans(nn.Module):
         cfg=None,
     ):
         super().__init__()
-        self.codebook_size = (
+        codebook_size = (
             cfg.codebook_size
             if cfg is not None and hasattr(cfg, "codebook_size")
             else codebook_size
         )
-        self.codebook_dim = (
+        codebook_dim = (
             cfg.codebook_dim
             if cfg is not None and hasattr(cfg, "codebook_dim")
             else codebook_dim
         )
+
+        self.codebook_size = codebook_size
+        self.codebook_dim = codebook_dim
 
         self.codebook = nn.Embedding(codebook_size, codebook_dim)
 
@@ -144,6 +147,12 @@ class KMeansEMA(nn.Module):
         )
         decay = cfg.decay if cfg is not None and hasattr(cfg, "decay") else decay
         eps = cfg.eps if cfg is not None and hasattr(cfg, "eps") else eps
+
+        self.codebook_size = codebook_size
+        self.codebook_dim = codebook_dim
+        self.kmeans_iters = kmeans_iters
+        self.decay = decay
+        self.eps = eps
 
         init_fn = torch.randn if not kmeans_init else torch.zeros
         embed = init_fn(codebook_size, codebook_dim)
