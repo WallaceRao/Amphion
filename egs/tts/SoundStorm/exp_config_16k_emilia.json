@@ -27,7 +27,7 @@
             "type": "kmeans_ema",
             "stat_mean_var_path": "/home/t-zeqianju/yuancwang/mls_wav2vec2bert_stats.pt",
             "kmeans": {
-                "codebook_size": 1024,
+                "codebook_size": 2048,
                 "codebook_dim": 1024,
                 "kmeans_init": true,
                 "kmeans_iters": 10,
@@ -78,7 +78,7 @@
     "train": {
         "max_epoch": 0,
         "use_dynamic_batchsize": true,
-        "max_tokens": 1200000,
+        "max_tokens": 1600000,
         "max_sentences": 16,
         "lr_warmup_steps": 32000,
         "lr_scheduler": "inverse_sqrt",
@@ -104,14 +104,7 @@
         "dataloader": {
           "num_worker": 4,
           "pin_memory": true
-        }
+        },
+        "use_emilia_dataset": true
     }
-    // "trans_exp": {
-    //     "dataset_list":["mls_train"],
-    //     "cache_dir": "/mnt/petrelfs/hehaorui/data/exp_cache/vc/",
-    //     "use_speaker": false,
-    //     "use_noise": false,
-    //     "noise_dir": "/mnt/petrelfs/hehaorui/data/noise/audiocaps",
-    //     "content_model_path": "/mnt/petrelfs/hehaorui/data/pretrained_ckpts/mhubert"
-    // }
 }

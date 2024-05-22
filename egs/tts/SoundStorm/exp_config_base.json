@@ -78,7 +78,7 @@
     "train": {
         "max_epoch": 0,
         "use_dynamic_batchsize": true,
-        "max_tokens": 1200000,   // 800000 = 16000 * 80 which means we use at most 100s speech for a batch
+        "max_tokens": 1200000,
         "max_sentences": 16,
         "lr_warmup_steps": 32000,
         "lr_scheduler": "inverse_sqrt",

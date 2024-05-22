@@ -3,21 +3,22 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import oss2
-import random
-import torch
-from torch.nn.utils.rnn import pad_sequence
-from utils.data_utils import *
-from tqdm import tqdm
-import pickle
+import oss2  # pip install oss2
+import io
 import librosa
+import torch
+import json
+import tqdm
 import numpy as np
+import logging
+import pickle
+import os
+import time
+from torch.utils.data import Dataset
 from multiprocessing import Pool
 import concurrent.futures
 from pathlib import Path
-import logging
-import io
-import time
+from transformers import SeamlessM4TFeatureExtractor
 
 
 class PhonemizerWarningFilter(logging.Filter):
@@ -41,7 +42,7 @@ MOUNT_PATH = "/mnt/data/oss_beijing/"
 data_json_path = "Emilia/Emilia-zh+en/Emilia-1k.json.gz"
 
 
-class CodecDataset(torch.utils.data.Dataset):
+class SoundStormDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         access_key_id=AK,
@@ -50,7 +51,7 @@ class CodecDataset(torch.utils.data.Dataset):
         cache_type="path",
         cfg=None,
     ):  # 'path' or 'meta'
-        self.cache_type = cache_type
+
         self.cfg = cfg
         # Initialize OSS client
         self.init_client(access_key_id, access_key_secret, bucket_name)
@@ -113,6 +114,10 @@ class CodecDataset(torch.utils.data.Dataset):
                 range(len(self.index2num_frames)),
                 key=lambda k: self.index2num_frames[k],
             )
+        )
+
+        self.processor = SeamlessM4TFeatureExtractor.from_pretrained(
+            "facebook/w2v-bert-2.0"
         )
 
     def init_client(self, access_key_id, access_key_secret, bucket_name):
@@ -345,15 +350,14 @@ class CodecDataset(torch.utils.data.Dataset):
         del index, audio_name, dir_name, json_name, json_path
         return meta
 
+    def __len__(self):
+        return self.wav_paths.__len__()
+
     def get_num_frames(self, index):
         # return self.wav_path_index2duration[index] * num_token_per_second + self.wav_path_index2phonelen[index]
         return self.wav_path_index2duration[index] * self.cfg.preprocess.sample_rate
 
-    def __len__(self):
-        return self.wav_paths.__len__()
-
     def __getitem__(self, idx):
-
         wav_path = self.wav_paths[idx]
         file_bytes = None
         try:
@@ -375,12 +379,50 @@ class CodecDataset(torch.utils.data.Dataset):
         meta = self.get_meta_from_wav_path(wav_path)
         if file_bytes is not None and meta is not None:
             buffer = io.BytesIO(file_bytes.read())
-            single_feature = dict()
-            # load speech
-            speech, sr = librosa.load(buffer, sr=self.cfg.preprocess.sample_rate)
-            speech = self.random_crop(speech, self.cfg.preprocess.max_length)
 
-            single_feature["speech"] = speech
+            try:
+                speech, sr = librosa.load(buffer, sr=self.cfg.preprocess.sample_rate)
+            except:
+                logger.info("Failed to load file. Get another.")
+                position = np.where(self.num_frame_indices == idx)[0][0]
+                random_index = np.random.choice(self.num_frame_indices[:position])
+                del position
+                return self.__getitem__(random_index)
+
+            single_feature = dict()
+
+            # pad the speech to the multiple of hop_size
+            speech = np.pad(
+                speech,
+                (
+                    0,
+                    self.cfg.preprocess.hop_size
+                    - len(speech) % self.cfg.preprocess.hop_size,
+                ),
+                mode="constant",
+            )
+            # resample the speech to 16k for feature extraction
+            if self.cfg.preprocess.sample_rate != 16000:
+                speech_16k = librosa.resample(
+                    speech, orig_sr=self.cfg.preprocess.sample_rate, target_sr=16000
+                )
+            else:
+                speech_16k = speech
+            inputs = self.processor(speech_16k, sampling_rate=16000)
+            input_features = inputs["input_features"][0]
+            attention_mask = inputs["attention_mask"][0]
+            # get speech mask
+            speech_frames = len(speech) // self.cfg.preprocess.hop_size
+            mask = np.ones(speech_frames)
+
+            single_feature.update(
+                {
+                    "input_features": input_features,
+                    "attention_mask": attention_mask,
+                    "speech": speech,
+                    "mask": mask,
+                }
+            )
 
             return single_feature
 
@@ -390,12 +432,3 @@ class CodecDataset(torch.utils.data.Dataset):
             random_index = np.random.choice(self.num_frame_indices[:position])
             del position
             return self.__getitem__(random_index)
-
-    def random_crop(self, speech, max_length):
-        if len(speech) <= max_length:
-            # padding
-            speech = np.pad(speech, (0, max_length - len(speech)), "constant")
-            return speech
-
-        start = random.randint(0, len(speech) - max_length)
-        return speech[start : start + max_length]

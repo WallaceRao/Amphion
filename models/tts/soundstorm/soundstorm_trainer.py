@@ -26,7 +26,6 @@ from accelerate.utils import ProjectConfiguration
 from einops import rearrange
 
 from models.tts.soundstorm.soundstorm_dataset import (
-    SoundStormDataset,
     SoundStormCollator,
 )
 from models.tts.gpt_tts.gpt_tts_dataset import batch_by_size
@@ -336,13 +335,28 @@ class SoundStormTrainer(TTSTrainer):
         return semantic_code
 
     def _build_dataset(self):
+        if (
+            hasattr(self.cfg.train, "use_emilia_dataset")
+            and self.cfg.train.use_emilia_dataset
+        ):
+            from models.tts.soundstorm.soundstorm_emilia_dataset import (
+                SoundStormDataset,
+            )
+        else:
+            from models.tts.soundstorm.soundstorm_dataset import SoundStormDataset
         return SoundStormDataset, SoundStormCollator
 
     def _build_dataloader(self):
         if self.cfg.train.use_dynamic_batchsize:
             print("Use Dynamic Batchsize......")
             Dataset, Collator = self._build_dataset()
-            train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
+            if (
+                hasattr(self.cfg.train, "use_emilia_dataset")
+                and self.cfg.train.use_emilia_dataset
+            ):
+                train_dataset = Dataset(cfg=self.cfg)
+            else:
+                train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
             train_collate = Collator(self.cfg)
             batch_sampler = batch_by_size(
                 train_dataset.num_frame_indices,
@@ -379,8 +393,13 @@ class SoundStormTrainer(TTSTrainer):
         else:
             print("Use Normal Batchsize......")
             Dataset, Collator = self._build_dataset()
-            train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
-            train_dataset = Dataset(is_valid=False)
+            if (
+                hasattr(self.cfg.train, "use_emilia_dataset")
+                and self.cfg.train.use_emilia_dataset
+            ):
+                train_dataset = Dataset(cfg=self.cfg)
+            else:
+                train_dataset = Dataset(self.cfg, self.cfg.dataset[0], is_valid=False)
             train_collate = Collator(self.cfg)
 
             train_loader = DataLoader(
@@ -407,7 +426,9 @@ class SoundStormTrainer(TTSTrainer):
     def _build_scheduler(self):
         lr_scheduler = get_inverse_sqrt_schedule(
             optimizer=self.optimizer,
-            num_warmup_steps=self.cfg.train.lr_warmup_steps,  # TODO: need to check wheather need to multiply by num_processes
+            # num_warmup_steps=self.cfg.train.lr_warmup_steps,  # TODO: need to check wheather need to multiply by num_processes
+            num_warmup_steps=self.cfg.train.lr_warmup_steps
+            * self.accelerator.num_processes,
         )
         return lr_scheduler
 
