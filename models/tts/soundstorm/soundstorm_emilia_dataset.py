@@ -40,6 +40,8 @@ SK = ""
 bucket_name = "pjlab-3090-openmmlabpartner"
 MOUNT_PATH = "/mnt/data/oss_beijing/"
 data_json_path = "Emilia/Emilia-zh+en/Emilia-1k.json.gz"
+data_json_path = "/mnt/bn/yuacnwang-speech/dataset/Emilia/emilia_json/Emilia-50k.json.gz"
+duration_setting = {'min': 3, 'max': 22}
 
 
 class SoundStormDataset(torch.utils.data.Dataset):
@@ -51,7 +53,7 @@ class SoundStormDataset(torch.utils.data.Dataset):
         cache_type="path",
         cfg=None,
     ):  # 'path' or 'meta'
-
+        self.cache_type = cache_type
         self.cfg = cfg
         # Initialize OSS client
         self.init_client(access_key_id, access_key_secret, bucket_name)
@@ -66,6 +68,7 @@ class SoundStormDataset(torch.utils.data.Dataset):
         self.json2filtered_idx = {}
 
         self.cache_folder = "cache/{}_cache".format(cache_type)
+        # self.cache_folder = "/mnt/bn/yuacnwang-speech/dataset/Emilia/cache/emilia_50k"
         Path(self.cache_folder).mkdir(parents=True, exist_ok=True)
 
         self.wav_paths_cache = os.path.join(self.cache_folder, "wav_paths_cache.pkl")
@@ -169,33 +172,39 @@ class SoundStormDataset(torch.utils.data.Dataset):
         with gzip.open(filename, "rt", encoding="utf-8") as f:
             return json.load(f)
 
-    def get_path_from_json(self, data):
-        if data["language"][0] not in self.language_list:
-            return
-        self.json_paths.append(data["json_path"])
+    def get_path_from_json(self, data): 
+        if data['language'][0] not in self.language_list:
+            return 
+        self.json_paths.append(data['json_path'])
         is_exists = True
-        if not self.bucket.object_exists(data["wav_path"][0]):
+        try:
+            if not self.bucket.object_exists(data['wav_path'][0]):
+                is_exists = False
+        except oss2.api.Exception as e:
             is_exists = False
-        for wav, duration, phone_count in zip(
-            data["wav_path"], data["duration"], data["phone_count"]
-        ):
+        remove_idx = []
+        for wav, duration, phone_count in zip(data['wav_path'], data['duration'], data['phone_count']):
+            if duration < duration_setting['min'] or duration > duration_setting['max']:
+                idx = wav.split("_")[-1].split(".")[0]
+                remove_idx.append(idx)
+                continue
             if is_exists:
                 self.wav_paths.append(wav)
             else:
-                if ".wav" in wav:
-                    wav = wav.replace(".wav", ".mp3")
+                if '.mp3' in wav:
+                    wav = wav.replace('.mp3', '.wav')
                     self.wav_paths.append(wav)
                 else:
-                    wav = wav.replace(".mp3", ".wav")
+                    wav = wav.replace('.wav', '.mp3')
                     self.wav_paths.append(wav)
             self.wav_path_index2duration.append(duration)
             self.wav_path_index2phonelen.append(phone_count)
-            # self.index2num_frames.append(duration * num_token_per_second + phone_count)
             self.index2num_frames.append(duration * self.cfg.preprocess.sample_rate)
+        
+        self.json2filtered_idx[data['json_path']] = [int(i) for i in data['filtered_idx'].split(',') if i not in remove_idx]
+        if not self.json2filtered_idx[data['json_path']]:
+            self.json_paths.pop()
 
-        self.json2filtered_idx[data["json_path"]] = [
-            int(i) for i in data["filtered_idx"].split(",")
-        ]
 
     def get_all_paths_from_json(self, json_path):
 
@@ -361,14 +370,15 @@ class SoundStormDataset(torch.utils.data.Dataset):
         wav_path = self.wav_paths[idx]
         file_bytes = None
         try:
-            for i in range(3):
-                try:
-                    file_bytes = self.bucket.get_object(wav_path.replace("_new", ""))
-                    break
-                except Exception as e:
-                    print(f"[Filter meta func] Error is {e}")
-                    time.sleep(i)
-                    print("retry")
+            # for i in range(3):
+            #     try:
+            #         file_bytes = self.bucket.get_object(wav_path.replace("_new", ""))
+            #         break
+            #     except Exception as e:
+            #         print(f"[Filter meta func] Error is {e}")
+            #         time.sleep(i)
+            #         print("retry")
+            file_bytes = self.bucket.get_object(wav_path.replace("_new", ""))
         except:
             logger.info("Get data from oss failed. Get another.")
             position = np.where(self.num_frame_indices == idx)[0][0]
@@ -382,6 +392,11 @@ class SoundStormDataset(torch.utils.data.Dataset):
 
             try:
                 speech, sr = librosa.load(buffer, sr=self.cfg.preprocess.sample_rate)
+                if len(speech) > duration_setting["max"] * self.cfg.preprocess.sample_rate:
+                    position = np.where(self.num_frame_indices == idx)[0][0]
+                    random_index = np.random.choice(self.num_frame_indices[:position])
+                    del position
+                    return self.__getitem__(random_index)
             except:
                 logger.info("Failed to load file. Get another.")
                 position = np.where(self.num_frame_indices == idx)[0][0]
