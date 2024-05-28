@@ -5,13 +5,13 @@
     "preprocess": {
         "hop_size": 200,
         "sample_rate": 16000,
-        "processed_dir": "/home/t-zeqianju/yuancwang/temp_test_dataset",
+        "processed_dir": "",
         "valid_file": "valid.json",
         "train_file": "train.json"
     },
     "model": {
         "type": "kmeans_ema",
-        "stat_mean_var_path": "/home/t-zeqianju/yuancwang/mls_wav2vec2bert_stats.pt",
+        "stat_mean_var_path": "/mnt/bn/yuacnwang-speech/ckpt/semantic_kmeans/mls_wav2vec2bert_stats.pt",
         "kmeans": {
             "codebook_size": 1024,
             "codebook_dim": 1024,
@@ -21,7 +21,7 @@
             "eps": 1e-5
         }
     },
-    "log_dir": "/blob/v-yuancwang/codec_ckpt/semantic_kmeans",
+    "log_dir": "/codec_ckpt/semantic_kmeans",
     "train": {
         "max_epoch": 0,
         "use_dynamic_batchsize": true,

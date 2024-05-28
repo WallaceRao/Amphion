@@ -24,11 +24,14 @@ import accelerate
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration
 from einops import rearrange
+from accelerate import DistributedDataParallelKwargs
 
 from models.tts.soundstorm.soundstorm_dataset import (
     SoundStormCollator,
 )
-from models.tts.gpt_tts.gpt_tts_dataset import batch_by_size
+
+# from models.tts.gpt_tts.gpt_tts_dataset import batch_by_size
+from models.codec.amphion_codec.codec_dataset import batch_by_size
 from models.codec.kmeans.kmeans_model import KMeans, KMeansEMA
 from models.tts.soundstorm.soundstorm_model import SoundStorm
 from models.codec.amphion_codec.codec import CodecEncoder, CodecDecoder
@@ -207,20 +210,25 @@ class SoundStormTrainer(TTSTrainer):
                 )
 
         # Resume or Finetune
-        with self.accelerator.main_process_first():
-            if args.resume:
-                ## Automatically resume according to the current exprimental name
-                print(
-                    "Automatically resuming from latest checkpoint in {}...".format(
-                        self.checkpoint_dir
+        try:
+            with self.accelerator.main_process_first():
+                if args.resume:
+                    ## Automatically resume according to the current exprimental name
+                    print(
+                        "Automatically resuming from latest checkpoint in {}...".format(
+                            self.checkpoint_dir
+                        )
                     )
-                )
-                start = time.monotonic_ns()
-                ckpt_path = self._load_model(
-                    checkpoint_dir=self.checkpoint_dir, resume_type=args.resume_type
-                )
-                end = time.monotonic_ns()
-                print(f"Resuming from checkpoint done in {(end - start) / 1e6:.2f}ms")
+                    start = time.monotonic_ns()
+                    ckpt_path = self._load_model(
+                        checkpoint_dir=self.checkpoint_dir, resume_type=args.resume_type
+                    )
+                    end = time.monotonic_ns()
+                    print(
+                        f"Resuming from checkpoint done in {(end - start) / 1e6:.2f}ms"
+                    )
+        except:
+            print("Resume failed")
 
         # save config file path
         self.config_save_path = os.path.join(self.exp_dir, "args.json")
@@ -247,12 +255,12 @@ class SoundStormTrainer(TTSTrainer):
             project_dir=self.exp_dir,
             logging_dir=os.path.join(self.exp_dir, "log"),
         )
-        # ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         self.accelerator = accelerate.Accelerator(
             gradient_accumulation_steps=self.cfg.train.gradient_accumulation_step,
             log_with=self.cfg.train.tracker,
             project_config=project_config,
-            # kwargs_handlers=[ddp_kwargs]
+            kwargs_handlers=[ddp_kwargs],
         )
         if self.accelerator.is_main_process:
             os.makedirs(project_config.project_dir, exist_ok=True)
@@ -262,6 +270,16 @@ class SoundStormTrainer(TTSTrainer):
 
     def _build_model(self):
         model = SoundStorm(cfg=self.cfg.model.soundstorm)
+        if (
+            hasattr(self.cfg.model.soundstorm, "pretrained_path")
+            and hasattr(self.cfg.model.soundstorm, "use_pretrained_model")
+            and self.cfg.model.soundstorm.use_pretrained_model
+        ):
+            pretrained_path = self.cfg.model.soundstorm.pretrained_path
+            if ".bin" in pretrained_path:
+                model.load_state_dict(torch.load(pretrained_path), strict=False)
+            elif ".safetensors" in pretrained_path:
+                safetensors.torch.load_model(model, pretrained_path, strict=False)
         return model
 
     def _build_kmeans_model(self):
@@ -279,7 +297,9 @@ class SoundStormTrainer(TTSTrainer):
         self.kmeans_model = kmeans_model
 
     def _build_semantic_model(self):
-        self.semantic_model = Wav2Vec2BertModel.from_pretrained("facebook/w2v-bert-2.0")
+        self.semantic_model = Wav2Vec2BertModel.from_pretrained(
+            "facebook/w2v-bert-2.0"
+        )
         self.semantic_model.eval()
         self.semantic_model.to(self.accelerator.device)
         self.layer_idx = 15
@@ -366,7 +386,7 @@ class SoundStormTrainer(TTSTrainer):
                 * self.accelerator.num_processes,
                 required_batch_size_multiple=self.accelerator.num_processes,
             )
-            np.random.seed(980209)
+            np.random.seed(self.args.dataloader_seed)
             np.random.shuffle(batch_sampler)
             print(batch_sampler[:1])
             batches = [
@@ -475,6 +495,11 @@ class SoundStormTrainer(TTSTrainer):
         attention_mask = batch["attention_mask"]
         speech = batch["speech"]
         x_mask = batch["mask"]
+        if (
+            hasattr(self.cfg.preprocess, "use_phone_cond")
+            and self.cfg.preprocess.use_phone_cond == True
+        ):
+            phone_id = batch["phone_id"]
 
         semantic_code = self._extract_semantic_code(
             input_features, attention_mask
@@ -492,9 +517,23 @@ class SoundStormTrainer(TTSTrainer):
         acoustic_code = acoustic_code[:, :seq_len, :]
         x_mask = x_mask[:, :seq_len]
 
-        logits, mask_layer, final_mask, x0, prompt_len, mask_prob = self.model(
-            x0=acoustic_code, x_mask=x_mask, cond=None, cond_code=semantic_code
-        )
+        torch.cuda.empty_cache()
+
+        if (
+            hasattr(self.cfg.model.soundstorm, "use_phone_cond")
+            and self.cfg.model.soundstorm.use_phone_cond == True
+        ):
+            logits, mask_layer, final_mask, x0, prompt_len, mask_prob = self.model(
+                x0=acoustic_code,
+                x_mask=x_mask,
+                cond=None,
+                cond_code=semantic_code,
+                phone_id=phone_id,
+            )
+        else:
+            logits, mask_layer, final_mask, x0, prompt_len, mask_prob = self.model(
+                x0=acoustic_code, x_mask=x_mask, cond=None, cond_code=semantic_code
+            )
         # print(
         #     "logits: ",
         #     logits.shape,

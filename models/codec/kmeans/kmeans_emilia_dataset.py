@@ -1,4 +1,4 @@
-import oss2  # pip install oss2
+import oss2
 import io
 import librosa
 import torch
@@ -18,7 +18,6 @@ from transformers import SeamlessM4TFeatureExtractor
 
 class PhonemizerWarningFilter(logging.Filter):
     def filter(self, record):
-        # 只过滤 phonemizer 中的 WARNING 级别日志
         if record.name == "phonemizer" and record.levelno == logging.WARNING:
             return False
         return True
@@ -34,7 +33,11 @@ AK = ""
 SK = ""
 bucket_name = "pjlab-3090-openmmlabpartner"
 MOUNT_PATH = "/mnt/data/oss_beijing/"
-data_json_path = "Emilia/Emilia-zh+en/Emilia-1k.json.gz"
+# data_json_path = "Emilia/Emilia-zh+en/Emilia-1k.json.gz"
+data_json_path = (
+    "/mnt/bn/yuacnwang-speech/dataset/Emilia/emilia_json/Emilia-50k.json.gz"
+)
+duration_setting = {"min": 3, "max": 22}
 
 
 class KMeansDataset(torch.utils.data.Dataset):
@@ -59,7 +62,8 @@ class KMeansDataset(torch.utils.data.Dataset):
         self.json_path2meta = {}
         self.json2filtered_idx = {}
 
-        self.cache_folder = "cache/{}_cache".format(cache_type)
+        # self.cache_folder = "cache/{}_cache".format(cache_type)
+        self.cache_folder = "/mnt/bn/yuacnwang-speech/dataset/Emilia/cache/emilia_50k"
         Path(self.cache_folder).mkdir(parents=True, exist_ok=True)
 
         self.wav_paths_cache = os.path.join(self.cache_folder, "wav_paths_cache.pkl")
@@ -115,7 +119,6 @@ class KMeansDataset(torch.utils.data.Dataset):
         )
 
     def init_client(self, access_key_id, access_key_secret, bucket_name):
-
         logger.info("Start to initialize OSS client")
         self.auth = oss2.Auth(access_key_id, access_key_secret)
         self.bucket = oss2.Bucket(
@@ -192,7 +195,6 @@ class KMeansDataset(torch.utils.data.Dataset):
         ]
 
     def get_all_paths_from_json(self, json_path):
-
         data_list = self.load_compressed_json(json_path)
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = [
@@ -352,7 +354,6 @@ class KMeansDataset(torch.utils.data.Dataset):
         return self.wav_paths.__len__()
 
     def __getitem__(self, idx):
-
         wav_path = self.wav_paths[idx]
         file_bytes = None
         try:
@@ -361,8 +362,8 @@ class KMeansDataset(torch.utils.data.Dataset):
                     file_bytes = self.bucket.get_object(wav_path.replace("_new", ""))
                     break
                 except Exception as e:
-                    print(f"[Filter meta func] Error is {e}")
-                    time.sleep(i)
+                    # print(f"[Filter meta func] Error is {e}")
+                    # time.sleep(i)
                     print("retry")
         except:
             logger.info("Get data from oss failed. Get another.")

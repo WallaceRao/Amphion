@@ -19,6 +19,17 @@ from multiprocessing import Pool
 import concurrent.futures
 from pathlib import Path
 from transformers import SeamlessM4TFeatureExtractor
+from utils.g2p_new.g2p import phonemizer_g2p
+
+
+LANG2CODE = {
+    "zh": 349,
+    "en": 350,
+    "ja": 351,
+    "ko": 352,
+    "fr": 353,
+    "de": 354,
+}
 
 
 class PhonemizerWarningFilter(logging.Filter):
@@ -35,13 +46,16 @@ logger.addFilter(filter)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 AK = ""
 SK = ""
 bucket_name = "pjlab-3090-openmmlabpartner"
 MOUNT_PATH = "/mnt/data/oss_beijing/"
-data_json_path = "Emilia/Emilia-zh+en/Emilia-1k.json.gz"
-data_json_path = "/mnt/bn/yuacnwang-speech/dataset/Emilia/emilia_json/Emilia-50k.json.gz"
-duration_setting = {'min': 3, 'max': 22}
+# data_json_path = "Emilia/Emilia-zh+en/Emilia-1k.json.gz"
+data_json_path = (
+    "/mnt/bn/yuacnwang-speech/dataset/Emilia/emilia_json/Emilia-50k.json.gz"
+)
+duration_setting = {"min": 3, "max": 22}
 
 
 class SoundStormDataset(torch.utils.data.Dataset):
@@ -67,8 +81,8 @@ class SoundStormDataset(torch.utils.data.Dataset):
         self.json_path2meta = {}
         self.json2filtered_idx = {}
 
-        self.cache_folder = "cache/{}_cache".format(cache_type)
-        # self.cache_folder = "/mnt/bn/yuacnwang-speech/dataset/Emilia/cache/emilia_50k"
+        # self.cache_folder = "cache/{}_cache".format(cache_type)
+        self.cache_folder = "/mnt/bn/yuacnwang-speech/dataset/Emilia/cache/emilia_50k"
         Path(self.cache_folder).mkdir(parents=True, exist_ok=True)
 
         self.wav_paths_cache = os.path.join(self.cache_folder, "wav_paths_cache.pkl")
@@ -124,13 +138,15 @@ class SoundStormDataset(torch.utils.data.Dataset):
         )
 
     def init_client(self, access_key_id, access_key_secret, bucket_name):
-
         logger.info("Start to initialize OSS client")
         self.auth = oss2.Auth(access_key_id, access_key_secret)
         self.bucket = oss2.Bucket(
             self.auth, "https://oss-cn-beijing.aliyuncs.com", bucket_name
         )
         logger.info("OSS client initialized successfully")
+
+    def g2p(self, text, language):
+        return phonemizer_g2p(text, language)
 
     def load_cached_paths(self):
         logger.info("Loaded paths from cache files")
@@ -172,42 +188,44 @@ class SoundStormDataset(torch.utils.data.Dataset):
         with gzip.open(filename, "rt", encoding="utf-8") as f:
             return json.load(f)
 
-    def get_path_from_json(self, data): 
-        if data['language'][0] not in self.language_list:
-            return 
-        self.json_paths.append(data['json_path'])
+    def get_path_from_json(self, data):
+        if data["language"][0] not in self.language_list:
+            return
+        self.json_paths.append(data["json_path"])
         is_exists = True
         try:
-            if not self.bucket.object_exists(data['wav_path'][0]):
+            if not self.bucket.object_exists(data["wav_path"][0]):
                 is_exists = False
         except oss2.api.Exception as e:
             is_exists = False
         remove_idx = []
-        for wav, duration, phone_count in zip(data['wav_path'], data['duration'], data['phone_count']):
-            if duration < duration_setting['min'] or duration > duration_setting['max']:
+        for wav, duration, phone_count in zip(
+            data["wav_path"], data["duration"], data["phone_count"]
+        ):
+            if duration < duration_setting["min"] or duration > duration_setting["max"]:
                 idx = wav.split("_")[-1].split(".")[0]
                 remove_idx.append(idx)
                 continue
             if is_exists:
                 self.wav_paths.append(wav)
             else:
-                if '.mp3' in wav:
-                    wav = wav.replace('.mp3', '.wav')
+                if ".mp3" in wav:
+                    wav = wav.replace(".mp3", ".wav")
                     self.wav_paths.append(wav)
                 else:
-                    wav = wav.replace('.wav', '.mp3')
+                    wav = wav.replace(".wav", ".mp3")
                     self.wav_paths.append(wav)
             self.wav_path_index2duration.append(duration)
             self.wav_path_index2phonelen.append(phone_count)
             self.index2num_frames.append(duration * self.cfg.preprocess.sample_rate)
-        
-        self.json2filtered_idx[data['json_path']] = [int(i) for i in data['filtered_idx'].split(',') if i not in remove_idx]
-        if not self.json2filtered_idx[data['json_path']]:
+
+        self.json2filtered_idx[data["json_path"]] = [
+            int(i) for i in data["filtered_idx"].split(",") if i not in remove_idx
+        ]
+        if not self.json2filtered_idx[data["json_path"]]:
             self.json_paths.pop()
 
-
     def get_all_paths_from_json(self, json_path):
-
         data_list = self.load_compressed_json(json_path)
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = [
@@ -392,7 +410,10 @@ class SoundStormDataset(torch.utils.data.Dataset):
 
             try:
                 speech, sr = librosa.load(buffer, sr=self.cfg.preprocess.sample_rate)
-                if len(speech) > duration_setting["max"] * self.cfg.preprocess.sample_rate:
+                if (
+                    len(speech)
+                    > duration_setting["max"] * self.cfg.preprocess.sample_rate
+                ):
                     position = np.where(self.num_frame_indices == idx)[0][0]
                     random_index = np.random.choice(self.num_frame_indices[:position])
                     del position
@@ -429,6 +450,34 @@ class SoundStormDataset(torch.utils.data.Dataset):
             # get speech mask
             speech_frames = len(speech) // self.cfg.preprocess.hop_size
             mask = np.ones(speech_frames)
+
+            # get phone id
+            if (
+                hasattr(self.cfg.preprocess, "use_phone_cond")
+                and self.cfg.preprocess.use_phone_cond == True
+            ):
+                phone_id = (
+                    self.g2p(meta["text"], meta["language"])[1]
+                    if self.cache_type == "path"
+                    else meta["phone_id"]
+                )
+                if len(phone_id) >= speech_frames:
+                    position = np.where(self.num_frame_indices == idx)[0][0]
+                    random_index = np.random.choice(self.num_frame_indices[:position])
+                    del position
+                    return self.__getitem__(random_index)
+                phone_id = torch.tensor(phone_id, dtype=torch.long)
+                phone_id = torch.cat(
+                    [
+                        torch.tensor(
+                            LANG2CODE[meta["language"]], dtype=torch.long
+                        ).reshape(1),
+                        phone_id,
+                    ]
+                )  # add language token
+                phone_mask = np.ones(len(phone_id))
+                single_feature.update({"phone_id": phone_id})
+                single_feature.update({"phone_mask": phone_mask})
 
             single_feature.update(
                 {

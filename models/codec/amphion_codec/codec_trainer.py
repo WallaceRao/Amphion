@@ -25,7 +25,9 @@ from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration
 
 from models.codec.amphion_codec.codec import CodecEncoder, CodecDecoder
-from models.tts.gpt_tts.gpt_tts_dataset import batch_by_size
+
+# from models.tts.gpt_tts.gpt_tts_dataset import batch_by_size
+from models.codec.amphion_codec.codec_dataset import batch_by_size
 from models.codec.amphion_codec.loss import (
     MultiResolutionSTFTLoss,
     MultiResolutionMelSpectrogramLoss,
@@ -308,7 +310,7 @@ class CodecTrainer(TTSTrainer):
                 * self.accelerator.num_processes,
                 required_batch_size_multiple=self.accelerator.num_processes,
             )
-            np.random.seed(980209)
+            np.random.seed(111)
             np.random.shuffle(batch_sampler)
             print(batch_sampler[:1])
             batches = [

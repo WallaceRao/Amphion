@@ -68,7 +68,6 @@ class StyleAdaptiveLayerNorm(nn.Module):
         self.style.affine.bias.data[self.in_channel :] = 0
 
     def forward(self, input, condition):
-
         style = self.style(condition).unsqueeze(1)  # (B, 1, 2C)
 
         gamma, beta = style.chunk(2, dim=-1)  # (B, 1, C), (B, 1, C)

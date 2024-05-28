@@ -11,10 +11,11 @@ import torch
 # from models.tts.vits.vits_trainer import VITSTrainer
 # from models.tts.valle.valle_trainer import VALLETrainer
 # from models.tts.naturalspeech2.ns2_trainer import NS2Trainer
-from models.tts.gpt_tts.gpt_tts_trainer import NS2Trainer as GPTTTSTrainer
+# from models.tts.gpt_tts.gpt_tts_trainer import NS2Trainer as GPTTTSTrainer
 from models.codec.kmeans.kmeans_trainer import KMeansTrainer
 from models.codec.amphion_codec.codec_trainer import CodecTrainer
 from models.tts.soundstorm.soundstorm_trainer import SoundStormTrainer
+from models.tts.text2semantic.t2s_trainer import T2STrainer
 from utils.util import load_config
 
 
@@ -24,10 +25,11 @@ def build_trainer(args, cfg):
         # "VITS": VITSTrainer,
         # "VALLE": VALLETrainer,
         # "NaturalSpeech2": NS2Trainer,
-        "GPTTTS": GPTTTSTrainer,
+        # "GPTTTS": GPTTTSTrainer,
         "KMeans": KMeansTrainer,
         "Codec": CodecTrainer,
         "SoundStorm": SoundStormTrainer,
+        "T2S": T2STrainer,
     }
 
     trainer_class = supported_trainer[cfg.model_type]
@@ -79,6 +81,12 @@ def main():
         type=str,
         default=None,
         help="Checkpoint for resume training or finetuning.",
+    )
+    parser.add_argument(
+        "--dataloader_seed",
+        type=int,
+        default=1,
+        help="Seed for dataloader",
     )
 
     # VALLETrainer.add_arguments(parser)

@@ -4,7 +4,9 @@ import torch.nn as nn
 import math
 from einops import rearrange
 from models.tts.soundstorm.transformer import DiffTransformer
-from models.tts.soundstorm.llama_nar import DiffLlama
+
+# from models.tts.soundstorm.llama_nar import DiffLlama
+# from models.tts.soundstorm.llama_nar_cross import DiffLlamaCross
 
 
 def top_k(logits, thres=0.9):
@@ -41,66 +43,75 @@ class SoundStorm(nn.Module):
         use_cond_code=True,
         cond_codebook_size=1024,
         cond_dim=1024,  # if use_cond_code is False, cond_dim is the dimension of the condition
-        use_llama_style=False,
+        use_llama_style=True,
+        use_phone_cond=False,
+        zero_init_cross_attn=True,
         cfg=None,
     ):
         super().__init__()
 
         num_quantizer = (
             cfg.num_quantizer
-            if cfg.num_quantizer is not None and hasattr(cfg, "num_quantizer")
+            if cfg is not None and hasattr(cfg, "num_quantizer")
             else num_quantizer
         )
         hidden_size = (
             cfg.hidden_size
-            if cfg.hidden_size is not None and hasattr(cfg, "hidden_size")
+            if cfg is not None and hasattr(cfg, "hidden_size")
             else hidden_size
         )
         num_layers = (
             cfg.num_layers
-            if cfg.num_layers is not None and hasattr(cfg, "num_layers")
+            if cfg is not None and hasattr(cfg, "num_layers")
             else num_layers
         )
         num_heads = (
             cfg.num_heads
-            if cfg.num_heads is not None and hasattr(cfg, "num_heads")
+            if cfg is not None and hasattr(cfg, "num_heads")
             else num_heads
         )
         codebook_size = (
             cfg.codebook_size
-            if cfg.codebook_size is not None and hasattr(cfg, "codebook_size")
+            if cfg is not None and hasattr(cfg, "codebook_size")
             else codebook_size
         )
         cfg_scale = (
             cfg.cfg_scale
-            if cfg.cfg_scale is not None and hasattr(cfg, "cfg_scale")
+            if cfg is not None and hasattr(cfg, "cfg_scale")
             else cfg_scale
         )
         mask_layer_schedule = (
             cfg.mask_layer_schedule
-            if cfg.mask_layer_schedule is not None
-            and hasattr(cfg, "mask_layer_schedule")
+            if cfg is not None and hasattr(cfg, "mask_layer_schedule")
             else mask_layer_schedule
         )
         use_cond_code = (
             cfg.use_cond_code
-            if cfg.use_cond_code is not None and hasattr(cfg, "use_cond_code")
+            if cfg is not None and hasattr(cfg, "use_cond_code")
             else use_cond_code
         )
         cond_codebook_size = (
             cfg.cond_codebook_size
-            if cfg.cond_codebook_size is not None and hasattr(cfg, "cond_codebook_size")
+            if cfg is not None and hasattr(cfg, "cond_codebook_size")
             else cond_codebook_size
         )
         cond_dim = (
-            cfg.cond_dim
-            if cfg.cond_dim is not None and hasattr(cfg, "cond_dim")
-            else cond_dim
+            cfg.cond_dim if cfg is not None and hasattr(cfg, "cond_dim") else cond_dim
         )
         use_llama_style = (
             cfg.use_llama_style
-            if cfg.use_llama_style is not None and hasattr(cfg, "use_llama_style")
+            if cfg is not None and hasattr(cfg, "use_llama_style")
             else use_llama_style
+        )
+        use_phone_cond = (
+            cfg.use_phone_cond
+            if cfg is not None and hasattr(cfg, "use_phone_cond")
+            else use_phone_cond
+        )
+        zero_init_cross_attn = (
+            cfg.zero_init_cross_attn
+            if cfg is not None and hasattr(cfg, "zero_init_cross_attn")
+            else zero_init_cross_attn
         )
 
         self.num_quantizer = num_quantizer
@@ -114,26 +125,8 @@ class SoundStorm(nn.Module):
         self.cond_codebook_size = cond_codebook_size
         self.cond_dim = cond_dim
         self.use_llama_style = use_llama_style
-
-        # conformer backbone settings
-        if not self.use_llama_style:
-            self.diff_estimator = DiffTransformer(
-                hidden_size=hidden_size,
-                num_heads=16,
-                num_layers=num_layers,
-                dropout=0.1,
-                ffn_dropout=0.1,
-                attention_dropout=0.0,
-            )
-        else:
-            self.diff_estimator = DiffLlama(
-                hidden_size=hidden_size,
-                num_heads=16,
-                num_layers=num_layers,
-                dropout=0.1,
-                ffn_dropout=0.1,
-                attention_dropout=0.0,
-            )
+        self.use_phone_cond = use_phone_cond
+        self.zero_init_cross_attn = zero_init_cross_attn
 
         self.layer_emb = nn.Embedding(self.num_quantizer, self.hidden_size)
         self.mask_emb = nn.Embedding(1, self.hidden_size)
@@ -161,7 +154,47 @@ class SoundStorm(nn.Module):
                 nn.Linear(self.hidden_size * 4, self.hidden_size),
             )
 
+        if self.use_phone_cond:
+            # TODO: hard coding
+            self.phone_emb = nn.Embedding(1024, hidden_size, padding_idx=1023)
+
         self.reset_parameters()
+
+        # transformer diffusion backbone
+        if not self.use_llama_style:
+            self.diff_estimator = DiffTransformer(
+                hidden_size=hidden_size,
+                num_heads=16,
+                num_layers=num_layers,
+                dropout=0.1,
+                ffn_dropout=0.1,
+                attention_dropout=0.0,
+            )
+        else:
+            if not self.use_phone_cond:
+                from models.tts.soundstorm.llama_nar import DiffLlama
+
+                self.diff_estimator = DiffLlama(
+                    hidden_size=hidden_size,
+                    num_heads=16,
+                    num_layers=num_layers,
+                    dropout=0.1,
+                    ffn_dropout=0.1,
+                    attention_dropout=0.0,
+                )
+            else:
+                from models.tts.soundstorm.llama_nar_cross import DiffLlamaCross
+
+                print("use diffllama nar cross")
+                self.diff_estimator = DiffLlamaCross(
+                    hidden_size=hidden_size,
+                    num_heads=16,
+                    num_layers=num_layers,
+                    dropout=0.1,
+                    ffn_dropout=0.1,
+                    attention_dropout=0.0,
+                    zero_init_cross_attn=zero_init_cross_attn,
+                )
 
     def mask_prob(self, t):
         return torch.sin(t * np.pi / 2).to(t.device)
@@ -252,7 +285,7 @@ class SoundStorm(nn.Module):
 
         return xt, new_t, mask_layer, mask, prompt_len, mask_prob
 
-    def loss_t(self, x0, x_mask, t, cond=None):
+    def loss_t(self, x0, x_mask, t, cond=None, phone_embedding=None):
         xt, new_t, mask_layer, mask, prompt_len, mask_prob = self.forward_diffusion(
             x0, t
         )
@@ -268,7 +301,12 @@ class SoundStorm(nn.Module):
         mask_layer_cond = self.layer_emb(mask_layer).unsqueeze(1)  # (1, 1, hidden_size)
         cond = cond + mask_layer_cond  # (B, T, hidden_size)
 
-        embeds = self.diff_estimator(xt, new_t, cond, x_mask)  # (B, T, hidden_size)
+        if self.use_phone_cond and phone_embedding != None:
+            embeds = self.diff_estimator(
+                xt, new_t, cond, x_mask, phone_embedding=phone_embedding
+            )  # (B, T, hidden_size)
+        else:
+            embeds = self.diff_estimator(xt, new_t, cond, x_mask)  # (B, T, hidden_size)
 
         logits = self.to_logits[mask_layer.item()](embeds)  # (B, T, codebook_size)
 
@@ -277,12 +315,12 @@ class SoundStorm(nn.Module):
 
         return logits, mask_layer, final_mask, x0, prompt_len, mask_prob
 
-    def compute_loss(self, x0, x_mask, cond=None):
+    def compute_loss(self, x0, x_mask, cond=None, phone_embedding=None):
         # x0: (B, T, num_quantizer)
         # x_mask: (B, T) mask is 0 for padding
         t = torch.rand(x0.shape[0], device=x0.device, requires_grad=False)
         t = torch.clamp(t, 1e-5, 1.0)
-        return self.loss_t(x0, x_mask, t, cond)
+        return self.loss_t(x0, x_mask, t, cond, phone_embedding)
 
     def reset_parameters(self):
         def _reset_parameters(m):
@@ -336,11 +374,16 @@ class SoundStorm(nn.Module):
         n_timesteps=[10, 4, 4, 4, 4, 4, 4, 4],
         cfg=1.0,
         rescale_cfg=1.0,
+        phone_id=None,
     ):
-
         assert (
             len(n_timesteps) == self.num_quantizer
         )  # each layer has a number of steps
+
+        if phone_id != None and self.use_phone_cond:
+            phone_embedding = self.phone_emb(phone_id)
+        else:
+            phone_embedding = None
 
         prompt_code = prompt  # (B, prompt_len, num_quantizer)
         prompt_len = prompt_code.shape[1]
@@ -412,13 +455,27 @@ class SoundStorm(nn.Module):
                     [prompt_mask, x_mask], dim=1
                 )  # (B, T), mask is 0 for padding
 
-                embeds = self.diff_estimator(xt_input, t, temp_cond, xt_mask)
+                if phone_embedding != None and self.use_phone_cond:
+                    embeds = self.diff_estimator(
+                        xt_input, t, temp_cond, xt_mask, phone_embedding=phone_embedding
+                    )
+                else:
+                    embeds = self.diff_estimator(xt_input, t, temp_cond, xt_mask)
                 embeds = embeds[:, prompt_len:, :]
 
                 # cfg
-                mask_embeds = self.diff_estimator(
-                    cur, t, temp_cond[:, prompt_len:, :], x_mask
-                )
+                if phone_embedding != None and self.use_phone_cond:
+                    mask_embeds = self.diff_estimator(
+                        cur,
+                        t,
+                        temp_cond[:, prompt_len:, :],
+                        x_mask,
+                        phone_embedding=phone_embedding,
+                    )
+                else:
+                    mask_embeds = self.diff_estimator(
+                        cur, t, temp_cond[:, prompt_len:, :], x_mask
+                    )
                 pos_emb_std = embeds.std()  # std(g_cond)
                 embeds = embeds + cfg * (embeds - mask_embeds)  # g_cfg
                 rescale_embeds = embeds * pos_emb_std / embeds.std()  # g_final
@@ -477,7 +534,7 @@ class SoundStorm(nn.Module):
 
         return xt
 
-    def forward(self, x0, x_mask, cond=None, cond_code=None):
+    def forward(self, x0, x_mask, cond=None, cond_code=None, phone_id=None):
         # x0: (B, T, num_quantizer)
         # x_mask: (B, T) mask is 0 for padding
         # cond: semantic token (B, T) or continuous features (B, T, cond_dim)
@@ -486,8 +543,13 @@ class SoundStorm(nn.Module):
         else:
             cond = self.cond_mlp(cond)
 
+        if phone_id != None and self.use_phone_cond:
+            phone_embedding = self.phone_emb(phone_id)
+        else:
+            phone_embedding = None
+
         logits, mask_layer, final_mask, x0, prompt_len, mask_prob = self.compute_loss(
-            x0, x_mask, cond
+            x0, x_mask, cond, phone_embedding
         )
         return logits, mask_layer, final_mask, x0, prompt_len, mask_prob
 

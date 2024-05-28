@@ -45,10 +45,10 @@ LANG2CODE = {
 AK = ""
 SK = ""
 bucket_name = "pjlab-3090-openmmlabpartner"
-MOUNT_PATH = "/mnt/data/oss_beijing/"
-data_json_path = "./Emilia-zh+en/Emilia-50k.json.gz"
+data_json_path = "./Emilia-zh+en/Emilia-1k.json.gz"
 num_token_per_second = 80
 default_sr = 16000  # it may need to change sampling rate
+duration_setting = {"min": 0, "max": 25}
 
 
 class EmiliaDataset(Dataset):
@@ -125,7 +125,6 @@ class EmiliaDataset(Dataset):
         )
 
     def init_client(self, access_key_id, access_key_secret, bucket_name):
-
         logger.info("Start to initialize OSS client")
         self.auth = oss2.Auth(access_key_id, access_key_secret)
         self.bucket = oss2.Bucket(
@@ -180,11 +179,19 @@ class EmiliaDataset(Dataset):
             return
         self.json_paths.append(data["json_path"])
         is_exists = True
-        if not self.bucket.object_exists(data["wav_path"][0]):
+        try:
+            if not self.bucket.object_exists(data["wav_path"][0]):
+                is_exists = False
+        except oss2.api.Exception as e:
             is_exists = False
+        remove_idx = []
         for wav, duration, phone_count in zip(
             data["wav_path"], data["duration"], data["phone_count"]
         ):
+            if duration < duration_setting["min"] or duration > duration_setting["max"]:
+                idx = wav.split("_")[-1].split(".")[0]
+                remove_idx.append(idx)
+                continue
             if is_exists:
                 self.wav_paths.append(wav)
             else:
@@ -199,11 +206,12 @@ class EmiliaDataset(Dataset):
             self.index2num_frames.append(duration * num_token_per_second + phone_count)
 
         self.json2filtered_idx[data["json_path"]] = [
-            int(i) for i in data["filtered_idx"].split(",")
+            int(i) for i in data["filtered_idx"].split(",") if i not in remove_idx
         ]
+        if not self.json2filtered_idx[data["json_path"]]:
+            self.json_paths.pop()
 
     def get_all_paths_from_json(self, json_path):
-
         data_list = self.load_compressed_json(json_path)
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = [
@@ -289,10 +297,14 @@ class EmiliaDataset(Dataset):
             )
         error_json_path_list = []
         for i in range(len(json2meta)):
-            if (
+            if not json2meta[i]:
+                error_json_path_list.append(self.json_paths[i])
+            elif (
                 json2meta[i][next(iter(json2meta[i]))]["language"]
                 not in self.language_list
             ):
+                language = json2meta[i][next(iter(json2meta[i]))]["language"]
+                logger.info("{} is not in language list".format(language))
                 error_json_path_list.append(self.json_paths[i])
             else:
                 self.json_path2meta[self.json_paths[i]] = json2meta[i]
@@ -322,8 +334,9 @@ class EmiliaDataset(Dataset):
         logger.info("Loaded meta from cache files")
         self.json_path2meta = pickle.load(open(self.json_path2meta_cache, "rb"))
         for path in self.wav_paths:
-            duration = self.get_meta_from_wav_path(path)["duration"]
-            phone_count = self.get_meta_from_wav_path(path)["phone_count"]
+            meta = self.get_meta_from_wav_path(path)
+            duration = meta["duration"]
+            phone_count = meta["phone_count"]
             self.wav_path_index2duration.append(duration)
             self.wav_path_index2phonelen.append(phone_count)
             self.index2num_frames.append(duration * num_token_per_second + phone_count)
@@ -367,9 +380,11 @@ class EmiliaDataset(Dataset):
         return self.wav_paths.__len__()
 
     def __getitem__(self, idx):
-
         wav_path = self.wav_paths[idx]
         file_bytes = None
+        position = np.where(self.num_frame_indices == idx)[0][0]
+        random_index = np.random.choice(self.num_frame_indices[:position])
+        del position
         try:
             for i in range(3):
                 try:
@@ -381,9 +396,6 @@ class EmiliaDataset(Dataset):
                     print("retry")
         except:
             logger.info("Get data from oss failed. Get another.")
-            position = np.where(self.num_frame_indices == idx)[0][0]
-            random_index = np.random.choice(self.num_frame_indices[:position])
-            del position
             return self.__getitem__(random_index)
 
         meta = self.get_meta_from_wav_path(wav_path)
@@ -395,36 +407,40 @@ class EmiliaDataset(Dataset):
             pad_shape = ((shape[0] // 200) + 1) * 200 - shape[0]
             speech = np.pad(speech, (0, pad_shape), mode="constant")
             del buffer, pad_shape, shape
-            speech_tensor = torch.tensor(speech, dtype=torch.float32)
 
-            phone_id = (
-                self.g2p(meta["text"], meta["language"])[1]
-                if self.cache_type == "path"
-                else meta["phone_id"]
-            )
-            phone_id = torch.tensor(phone_id, dtype=torch.long)
-            phone_id = torch.cat(
-                [
-                    torch.tensor(LANG2CODE[meta["language"]], dtype=torch.long).reshape(
-                        1
-                    ),
-                    phone_id,
-                ]
-            )  # add language token
-            del meta, speech, sr
-            return dict(
-                speech=speech_tensor,
-                phone_id=phone_id,
-            )
+            if (
+                speech.shape[0] < default_sr * duration_setting["min"]
+                and speech.shape[0] > default_sr * duration_setting["max"]
+            ):
+                logger.info("Wav length exceeds the requirement")
+                return self.__getitem__(random_index)
+            else:
+                speech_tensor = torch.tensor(speech, dtype=torch.float32)
+
+                phone_id = (
+                    self.g2p(meta["text"], meta["language"])[1]
+                    if self.cache_type == "path"
+                    else meta["phone_id"]
+                )
+                phone_id = torch.tensor(phone_id, dtype=torch.long)
+                phone_id = torch.cat(
+                    [
+                        torch.tensor(
+                            LANG2CODE[meta["language"]], dtype=torch.long
+                        ).reshape(1),
+                        phone_id,
+                    ]
+                )  # add language token
+                del meta, speech, sr
+                return dict(
+                    speech=speech_tensor,
+                    phone_id=phone_id,
+                )
         else:
             logger.info("Failed to get file after retries.")
-            position = np.where(self.num_frame_indices == idx)[0][0]
-            random_index = np.random.choice(self.num_frame_indices[:position])
-            del position
             return self.__getitem__(random_index)
 
 
 if __name__ == "__main__":
-
     dataset = EmiliaDataset(AK, SK, bucket_name)
     print(dataset.__getitem__(0))

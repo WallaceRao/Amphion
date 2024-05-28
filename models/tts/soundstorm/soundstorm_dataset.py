@@ -136,6 +136,12 @@ class SoundStormCollator(object):
                 packed_batch_features[key] = pad_sequence(
                     [torch.tensor(utt[key]).float() for utt in batch], batch_first=True
                 )
+            if key == "phone_id":
+                packed_batch_features[key] = pad_sequence(
+                    [utt[key].long() for utt in batch],
+                    batch_first=True,
+                    padding_value=1023,
+                )
             else:
                 pass
 

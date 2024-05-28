@@ -248,14 +248,14 @@ class KMeansEMA(nn.Module):
         return embed_ind, quantize
 
 
-# if __name__ == "__main__":
-#     model = KMeans()
-#     x = torch.randn(2, 100, 1024)
-#     quantize, codebook_loss, perp = model(x)
-#     print(quantize.shape, codebook_loss.shape, perp)
-#     # torch.Size([2, 10, 1024]) torch.Size([2, 10, 1024]) tensor(6.9078)
+if __name__ == "__main__":
+    model = KMeans()
+    x = torch.randn(2, 100, 1024)
+    quantize, codebook_loss, perp = model(x)
+    print(quantize.shape, codebook_loss.shape, perp)
+    # torch.Size([2, 10, 1024]) torch.Size([2, 10, 1024]) tensor(6.9078)
 
-#     model = KMeansEMA()
-#     x = torch.randn(2, 100, 1024)
-#     quantize, codebook_loss, perp = model(x)
-#     print(quantize.shape, codebook_loss, perp)
+    model = KMeansEMA()
+    x = torch.randn(2, 100, 1024)
+    quantize, codebook_loss, perp = model(x)
+    print(quantize.shape, codebook_loss, perp)

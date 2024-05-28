@@ -38,7 +38,10 @@ AK = ""
 SK = ""
 bucket_name = "pjlab-3090-openmmlabpartner"
 MOUNT_PATH = "/mnt/data/oss_beijing/"
-data_json_path = "Emilia/Emilia-zh+en/Emilia-1k.json.gz"
+# data_json_path = "Emilia/Emilia-zh+en/Emilia-1k.json.gz"
+data_json_path = (
+    "/mnt/bn/yuacnwang-speech/dataset/Emilia/emilia_json/Emilia-50k.json.gz"
+)
 
 
 class CodecDataset(torch.utils.data.Dataset):
@@ -64,7 +67,8 @@ class CodecDataset(torch.utils.data.Dataset):
         self.json_path2meta = {}
         self.json2filtered_idx = {}
 
-        self.cache_folder = "cache/{}_cache".format(cache_type)
+        # self.cache_folder = "cache/{}_cache".format(cache_type)
+        self.cache_folder = "/mnt/bn/yuacnwang-speech/dataset/Emilia/cache/emilia_50k"
         Path(self.cache_folder).mkdir(parents=True, exist_ok=True)
 
         self.wav_paths_cache = os.path.join(self.cache_folder, "wav_paths_cache.pkl")
@@ -116,7 +120,6 @@ class CodecDataset(torch.utils.data.Dataset):
         )
 
     def init_client(self, access_key_id, access_key_secret, bucket_name):
-
         logger.info("Start to initialize OSS client")
         self.auth = oss2.Auth(access_key_id, access_key_secret)
         self.bucket = oss2.Bucket(
@@ -193,7 +196,6 @@ class CodecDataset(torch.utils.data.Dataset):
         ]
 
     def get_all_paths_from_json(self, json_path):
-
         data_list = self.load_compressed_json(json_path)
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = [
@@ -353,7 +355,6 @@ class CodecDataset(torch.utils.data.Dataset):
         return self.wav_paths.__len__()
 
     def __getitem__(self, idx):
-
         wav_path = self.wav_paths[idx]
         file_bytes = None
         try:
@@ -377,7 +378,13 @@ class CodecDataset(torch.utils.data.Dataset):
             buffer = io.BytesIO(file_bytes.read())
             single_feature = dict()
             # load speech
-            speech, sr = librosa.load(buffer, sr=self.cfg.preprocess.sample_rate)
+            try:
+                speech, sr = librosa.load(buffer, sr=self.cfg.preprocess.sample_rate)
+            except:
+                position = np.where(self.num_frame_indices == idx)[0][0]
+                random_index = np.random.choice(self.num_frame_indices[:position])
+                del position
+                return self.__getitem__(random_index)
             speech = self.random_crop(speech, self.cfg.preprocess.max_length)
 
             single_feature["speech"] = speech

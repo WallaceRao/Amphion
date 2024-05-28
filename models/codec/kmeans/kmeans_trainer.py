@@ -28,7 +28,7 @@ from accelerate.utils import ProjectConfiguration
 #     KMeansDataset,
 #     KMeansCollator,
 # )
-from models.tts.gpt_tts.gpt_tts_dataset import batch_by_size
+from models.codec.amphion_codec.codec_dataset import batch_by_size
 
 from models.codec.kmeans.kmeans_model import KMeans, KMeansEMA
 
@@ -262,7 +262,9 @@ class KMeansTrainer(TTSTrainer):
         return model
 
     def _build_semantic_model(self):
-        self.semantic_model = Wav2Vec2BertModel.from_pretrained("facebook/w2v-bert-2.0")
+        self.semantic_model = Wav2Vec2BertModel.from_pretrained(
+            "facebook/w2v-bert-2.0"
+        )
         self.semantic_model.eval()
         self.semantic_model.to(self.accelerator.device)
         self.layer_idx = 15

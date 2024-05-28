@@ -235,7 +235,6 @@ class DiffLlama(LlamaModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-
         # retrieve some shape info
         batch_size, seq_length, _ = x.shape
 

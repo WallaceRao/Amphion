@@ -51,15 +51,13 @@ def inference(a, h):
     generator.eval()
     generator.remove_weight_norm()
     with torch.no_grad():
-        test_json = "/blob/v-zeqianju/dataset/tts/librispeech/test/ref_dur_3_test_merge_1pspk_with_punc_refmeta_normwav_fix_refuid_new_diffprompt.json"
+        test_json = "/dataset/tts/librispeech/test/ref_dur_3_test_merge_1pspk_with_punc_refmeta_normwav_fix_refuid_new_diffprompt.json"
 
         with open(test_json, "r") as f:
             test_data = json.load(f)
             print(test_data.keys())
 
-        test_wav_output = (
-            "/blob/v-shenkai/checkpoints/tts/vocoder/bigvgan/v2/wav_22wstep"
-        )
+        test_wav_output = "/checkpoints/tts/vocoder/bigvgan/v2/wav_22wstep"
 
         os.makedirs(test_wav_output, exist_ok=True)
 
@@ -110,7 +108,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--checkpoint_file",
-        default="/blob/v-shenkai/checkpoints/tts/vocoder/bigvgan/v2/g_00220000",
+        default="/checkpoints/tts/vocoder/bigvgan/v2/g_00220000",
         type=str,
     )
 

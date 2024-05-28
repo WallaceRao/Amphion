@@ -13,12 +13,14 @@ export PYTHONPATH=$work_dir
 export PYTHONIOENCODING=UTF-8
  
 ######## Set Experiment Configuration ###########
-exp_config="$exp_dir/exp_config_base.json"
-exp_name="codec_dac_vocos_24K_320hopsize_12vq_30vocos_layers_emilia"
+exp_config="$exp_dir/exp_config_emilia.json"
+exp_name="codec_dac_vocos_24K_320hopsize_12vq_30vocos_layers_emilia_50k"
 
 ######## Train Model ###########
-CUDA_VISIBLE_DEVICES="0" accelerate launch \
+CUDA_VISIBLE_DEVICES="0,1,2,3" accelerate launch --main_process_port 11111 \
     "${work_dir}"/bins/tts/train.py \
     --config=$exp_config \
     --exp_name=$exp_name \
+    --resume \
+    --resume_type='finetune' \
     --log_level debug \
