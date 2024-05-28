@@ -15,8 +15,8 @@ export PYTHONIOENCODING=UTF-8
 ######## Set Experiment Configuration ###########
 # exp_config="$exp_dir/exp_config_base.json"
 # exp_name="soundstorm_24k_12layers_debug"
-exp_config="$exp_dir/exp_config_16k_emilia_llama_add_phone.json"
-exp_name="soundstorm_16k_kmeans_2048_emilia_50k_llama_add_phone"
+exp_config="$exp_dir/exp_config_16k_emilia_llama.json"
+exp_name="soundstorm_16k_kmeans_2048_emilia_50k_llama"
 
 ######## Train Model ###########
 CUDA_VISIBLE_DEVICES="0,1,2,3" accelerate launch --main_process_port 16033 \
@@ -26,37 +26,3 @@ CUDA_VISIBLE_DEVICES="0,1,2,3" accelerate launch --main_process_port 16033 \
     --resume \
     --log_level debug \
     --dataloader_seed 52349 \
-
-
-CUDA_VISIBLE_DEVICES="0,1,2,3" accelerate launch --main_process_port 16033 \
-    "${work_dir}"/bins/tts/train.py \
-    --config=$exp_config \
-    --exp_name=$exp_name \
-    --resume \
-    --log_level debug \
-    --dataloader_seed 5219 \
-
-
-CUDA_VISIBLE_DEVICES="0,1,2,3" accelerate launch --main_process_port 16033 \
-    "${work_dir}"/bins/tts/train.py \
-    --config=$exp_config \
-    --exp_name=$exp_name \
-    --resume \
-    --log_level debug \
-    --dataloader_seed 53219 \
-
-CUDA_VISIBLE_DEVICES="0,1,2,3" accelerate launch --main_process_port 16033 \
-    "${work_dir}"/bins/tts/train.py \
-    --config=$exp_config \
-    --exp_name=$exp_name \
-    --resume \
-    --log_level debug \
-    --dataloader_seed 536291 \
-
-CUDA_VISIBLE_DEVICES="0,1,2,3" accelerate launch --main_process_port 16033 \
-    "${work_dir}"/bins/tts/train.py \
-    --config=$exp_config \
-    --exp_name=$exp_name \
-    --resume \
-    --log_level debug \
-    --dataloader_seed 543219 \
