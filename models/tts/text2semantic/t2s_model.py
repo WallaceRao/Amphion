@@ -228,7 +228,7 @@ class T2SLlama(nn.Module):
     ):
         phone_mask = torch.ones_like(phone_ids)
         prompt_mask = torch.ones_like(prompt_ids)
-        phone_ids, _, _ = self.add_phone_eos_bos_label(
+        phone_ids, _, _, _ = self.add_phone_eos_bos_label(
             phone_ids,
             phone_mask,
             self.eos_phone_id,

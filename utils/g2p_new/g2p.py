@@ -61,7 +61,7 @@ lang2backend = {
     "de": phonemizer_de,
 }
 
-with open("/opt/tiger/SpeechGeneration/utils/g2p_new/mls_emilia.json", "r") as f:
+with open("/mnt/data2/share/raoyonghui/yuancheng/Amphion/utils/g2p_new/mls_emilia.json", "r") as f:
     json_data = f.read()
 token = json.loads(json_data)
 

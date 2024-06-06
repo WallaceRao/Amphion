@@ -28,7 +28,7 @@
         },
         "kmeans": {
             "type": "kmeans_ema",
-            "stat_mean_var_path": "/mnt/bn/yuacnwang-speech/ckpt/semantic_kmeans/emilia_wav2vec2bert_stats_10k.pt",   // https://huggingface.co/Hecheng0625/semantic_kmeans/tree/main/semantic_kmeans_emilia_50k_2048_stable
+            "stat_mean_var_path": "/mnt/data2/share/raoyonghui/yuancheng/semantic_kmeans/semantic_kmeans_emilia_50k_2048_stable/emilia_wav2vec2bert_stats_10k.pt",   // https://huggingface.co/Hecheng0625/semantic_kmeans/tree/main/semantic_kmeans_emilia_50k_2048_stable
             "kmeans": {
                 "codebook_size": 2048,
                 "codebook_dim": 1024,
@@ -37,7 +37,7 @@
                 "decay": 0.8,
                 "eps": 1e-5
             },
-            "pretrained_path": "/mnt/bn/yuacnwang-speech/ckpt/semantic_kmeans/semantic_kmeans_emilia_50k_2048_stable/model.safetensors"   // https://huggingface.co/Hecheng0625/semantic_kmeans/tree/main/semantic_kmeans_emilia_50k_2048_stable
+            "pretrained_path": "/mnt/data2/share/raoyonghui/yuancheng/semantic_kmeans/semantic_kmeans_emilia_50k_2048_stable/model.safetensors"   // https://huggingface.co/Hecheng0625/semantic_kmeans/tree/main/semantic_kmeans_emilia_50k_2048_stable
         },
         "codec": {
             "encoder": {
@@ -45,7 +45,7 @@
                 "up_ratios": [4, 4, 4, 5],
                 "out_channels": 256,
                 "use_tanh": false,
-                "pretrained_path": "/mnt/bn/yuacnwang-speech/ckpt/codec/codec_dac_vocos_16K_320hopsize_8vq/pytorch_model.bin"   // https://huggingface.co/Hecheng0625/codec_16k_320hopsize_8layer_vocos
+                "pretrained_path": "/mnt/data2/share/raoyonghui/yuancheng/codec_16k_320hopsize_8layer_vocos/pytorch_model.bin"   // https://huggingface.co/Hecheng0625/codec_16k_320hopsize_8layer_vocos
             },
             "decoder": {
                 "in_channel": 256,
@@ -73,11 +73,11 @@
                 "n_fft": 1280,
                 "hop_size": 320,
                 "padding": "same",
-                "pretrained_path": "/mnt/bn/yuacnwang-speech/ckpt/codec/codec_dac_vocos_16K_320hopsize_8vq/pytorch_model_1.bin"   // https://huggingface.co/Hecheng0625/codec_16k_320hopsize_8layer_vocos
+                "pretrained_path": "/mnt/data2/share/raoyonghui/yuancheng/codec_16k_320hopsize_8layer_vocos/pytorch_model_1.bin"   // https://huggingface.co/Hecheng0625/codec_16k_320hopsize_8layer_vocos
             }
         }
     },
-    "log_dir": "/mnt/bn/yuacnwang-speech/ckpt/soundstorm",
+    "log_dir": "/mnt/data2/share/raoyonghui/yuancheng/logs",
     "train": {
         "max_epoch": 0,
         "use_dynamic_batchsize": true,
